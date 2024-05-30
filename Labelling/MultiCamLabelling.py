@@ -58,25 +58,23 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import cv2
 import os
-import numpy as np
 import pandas as pd
-from PIL import Image, ImageTk
+import numpy as np
+from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.backend_bases import MouseButton
-import matplotlib.pyplot as plt
-from Helpers.CalibrateCams import BasicCalibration
-
+from PIL import Image, ImageTk
 
 class LabelingTool:
     def __init__(self, root):
         self.root = root
         self.root.title("Body Parts Labeling Tool")
 
-        # Get screen dimensions
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
 
         self.marker_size = 3  # Default marker size
+        self.calibration_points_static = {}  # Ensure initialization
 
         self.main_menu()
 
@@ -184,8 +182,7 @@ class LabelingTool:
         self.canvas.mpl_connect("motion_notify_event", self.on_drag)
 
         self.dragging_point = None
-        self.calibration_points_static = {label: {"side": None, "front": None, "overhead": None} for label in
-                                          self.labels}
+        self.calibration_points_static = {label: {"side": None, "front": None, "overhead": None} for label in self.labels}
 
         self.show_frames()
 
@@ -237,16 +234,17 @@ class LabelingTool:
         marker_size = self.marker_size_var.get()
 
         if event.button == MouseButton.RIGHT:
-            if self.calibration_points_static[label][view] is not None:
-                self.calibration_points_static[label][view].remove()
-            self.calibration_points_static[label][view] = ax.scatter(event.xdata, event.ydata, c=color,
-                                                                     s=marker_size * 10, label=label)
-            self.canvas.draw()
-            self.advance_label()
+            if event.key == 'shift':
+                self.delete_closest_point(ax, event)
+            else:
+                if self.calibration_points_static[label][view] is not None:
+                    self.calibration_points_static[label][view].remove()
+                self.calibration_points_static[label][view] = ax.scatter(event.xdata, event.ydata, c=color,
+                                                                         s=marker_size * 10, label=label)
+                self.canvas.draw()
+                self.advance_label()
         elif event.button == MouseButton.LEFT:
             self.dragging_point = self.find_closest_point(ax, event)
-        elif event.button == MouseButton.RIGHT and event.key == 'shift':
-            self.delete_closest_point(ax, event)
 
     def find_closest_point(self, ax, event):
         min_dist = float('inf')
@@ -385,8 +383,6 @@ class LabelingTool:
             cv2.imwrite(front_path, frame_front)
             cv2.imwrite(overhead_path, frame_overhead)
 
-            messagebox.showinfo("Info", "Frames saved successfully")
-
     def show_frames(self, val=None):
         frame_number = self.slider.get()
 
@@ -454,7 +450,6 @@ class LabelingTool:
         self.setup_labeling_ui()
 
     def extract_date_from_folder_path(self, folder_path):
-        # Assuming folder path has date somewhere
         parts = folder_path.split(os.sep)
         for part in parts:
             if part.isdigit() and len(part) == 8:
@@ -503,8 +498,7 @@ class LabelingTool:
 
         self.red_line_view_var = tk.StringVar(value="None")
         for i, view in enumerate(["Side", "Front", "Overhead", "None"]):
-            tk.Radiobutton(control_frame, text=view, variable=self.red_line_view_var, value=view).grid(row=1, column=i,
-                                                                                                       padx=5)
+            tk.Radiobutton(control_frame, text=view, variable=self.red_line_view_var, value=view).grid(row=1, column=i, padx=5)
 
         self.display_frame()
 
@@ -537,6 +531,23 @@ class LabelingTool:
         for widget in self.root.winfo_children():
             widget.destroy()
 
+    def setup_zoom_pan(self):
+        self.scale = 1.0
+        self.canvas.mpl_connect('button_press_event', self.on_press)
+        self.canvas.mpl_connect('button_release_event', self.on_release)
+
+        self.toolbar = NavigationToolbar2Tk(self.canvas, self.root)
+        self.toolbar.update()
+
+        self.zoom_active = False
+        self.pan_active = False
+
+    def on_press(self, event):
+        if event.dblclick:
+            self.toolbar.zoom()
+
+    def on_release(self, event):
+        self.toolbar.release(event)
 
 if __name__ == "__main__":
     root = tk.Tk()
