@@ -73,13 +73,17 @@ class LabelingTool:
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
 
-        self.marker_size = 3  # Default marker size
+        self.marker_size = 1  # Default marker size
         self.calibration_points_static = {}  # Ensure initialization
 
         self.crosshair_lines = []
         self.dragging_point = None
         self.panning = False
         self.pan_start = None
+
+        self.marker_size_var = tk.IntVar(value=self.marker_size)
+        self.contrast_var = tk.DoubleVar(value=1.0)
+        self.brightness_var = tk.DoubleVar(value=1.0)
 
         self.main_menu()
 
@@ -127,26 +131,62 @@ class LabelingTool:
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         control_frame = tk.Frame(main_frame)
-        control_frame.pack(side=tk.TOP, pady=10)
+        control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
 
-        self.frame_label = tk.Label(control_frame, text="Frame: 0")
-        self.frame_label.pack(side=tk.LEFT, padx=5)
+        # Marker size, contrast, brightness horizontally on the far left
+        settings_frame = tk.Frame(control_frame)
+        settings_frame.pack(side=tk.LEFT, padx=10)
 
-        self.slider = tk.Scale(control_frame, from_=0, to=self.total_frames - 1, orient=tk.HORIZONTAL, length=600,
+        tk.Label(settings_frame, text="Marker Size").pack(side=tk.LEFT, padx=5)
+        tk.Scale(settings_frame, from_=1, to=5, orient=tk.HORIZONTAL, variable=self.marker_size_var,
+                 command=self.update_marker_size).pack(side=tk.LEFT, padx=5)
+
+        tk.Label(settings_frame, text="Contrast").pack(side=tk.LEFT, padx=5)
+        tk.Scale(settings_frame, from_=0.5, to=3.0, orient=tk.HORIZONTAL, resolution=0.1, variable=self.contrast_var,
+                 command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
+
+        tk.Label(settings_frame, text="Brightness").pack(side=tk.LEFT, padx=5)
+        tk.Scale(settings_frame, from_=0.5, to=3.0, orient=tk.HORIZONTAL, resolution=0.1, variable=self.brightness_var,
+                 command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
+
+        # Frame label and slider in the middle
+        frame_control = tk.Frame(control_frame)
+        frame_control.pack(side=tk.LEFT, padx=20)
+
+        self.frame_label = tk.Label(frame_control, text="Frame: 0")
+        self.frame_label.pack()
+
+        self.slider = tk.Scale(frame_control, from_=0, to=self.total_frames - 1, orient=tk.HORIZONTAL, length=400,
                                command=self.show_frames)
-        self.slider.pack(side=tk.LEFT, padx=5)
+        self.slider.pack()
 
-        skip_frame = tk.Frame(main_frame)
-        skip_frame.pack(side=tk.TOP, pady=10)
+        # Skip buttons stacked vertically under the frame slider
+        skip_frame = tk.Frame(frame_control)
+        skip_frame.pack()
         self.add_skip_buttons(skip_frame)
 
+        # Home, Save, Back buttons
+        button_frame = tk.Frame(control_frame)
+        button_frame.pack(side=tk.LEFT, padx=20)
+
+        home_button = tk.Button(button_frame, text="Home", command=self.reset_view)
+        home_button.pack(pady=5)
+
+        save_button = tk.Button(button_frame, text="Save Calibration Points",
+                                command=self.save_calibration_points)
+        save_button.pack(pady=5)
+
+        back_button = tk.Button(button_frame, text="Back to Extract Frames Menu",
+                                command=self.extract_frames_menu)
+        back_button.pack(pady=5)
+
+        # Right side for labels
         control_frame_right = tk.Frame(main_frame)
         control_frame_right.pack(side=tk.RIGHT, padx=10, pady=10, fill=tk.Y)
 
         self.labels = ["StartPlatL", "StepL", "StartPlatR", "StepR", "Door", "TransitionL", "TransitionR", "Nose"]
         self.label_colors = self.generate_label_colors(self.labels)
         self.current_label = tk.StringVar(value=self.labels[0])
-        self.marker_size_var = tk.IntVar(value=self.marker_size)
 
         self.calibration_points = {label: {"side": None, "front": None, "overhead": None} for label in self.labels}
 
@@ -160,37 +200,10 @@ class LabelingTool:
                                           indicatoron=0, width=20)
             label_button.pack(side=tk.LEFT)
 
-        tk.Label(control_frame_right, text="Marker Size").pack(pady=5)
-        tk.Scale(control_frame_right, from_=1, to=5, orient=tk.HORIZONTAL, variable=self.marker_size_var,
-                 command=self.update_marker_size).pack(pady=5)
-
         self.current_view = tk.StringVar(value="side")
         for view in ["side", "front", "overhead"]:
             tk.Radiobutton(control_frame_right, text=view.capitalize(), variable=self.current_view, value=view).pack(
                 pady=2)
-
-        tk.Label(control_frame_right, text="Contrast").pack(pady=5)
-        self.contrast_var = tk.DoubleVar(value=1.0)
-        tk.Scale(control_frame_right, from_=0.5, to=3.0, orient=tk.HORIZONTAL, resolution=0.1,
-                 variable=self.contrast_var,
-                 command=self.update_contrast_brightness).pack(pady=5)
-
-        tk.Label(control_frame_right, text="Brightness").pack(pady=5)
-        self.brightness_var = tk.DoubleVar(value=1.0)
-        tk.Scale(control_frame_right, from_=0.5, to=3.0, orient=tk.HORIZONTAL, resolution=0.1,
-                 variable=self.brightness_var,
-                 command=self.update_contrast_brightness).pack(pady=5)
-
-        home_button = tk.Button(control_frame_right, text="Home", command=self.reset_view)
-        home_button.pack(pady=5)
-
-        save_button = tk.Button(control_frame_right, text="Save Calibration Points",
-                                command=self.save_calibration_points)
-        save_button.pack(pady=5)
-
-        back_button = tk.Button(control_frame_right, text="Back to Extract Frames Menu",
-                                command=self.extract_frames_menu)
-        back_button.pack(pady=5)
 
         self.fig, self.axs = plt.subplots(3, 1, figsize=(10, 12))
         self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
