@@ -55,7 +55,7 @@ Skeleton:
 '''
 
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 import cv2
 import os
 import pandas as pd
@@ -63,7 +63,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.backend_bases import MouseButton
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageEnhance
 
 class LabelingTool:
     def __init__(self, root):
@@ -75,6 +75,11 @@ class LabelingTool:
 
         self.marker_size = 3  # Default marker size
         self.calibration_points_static = {}  # Ensure initialization
+
+        self.crosshair_lines = []
+        self.dragging_point = None
+        self.panning = False
+        self.pan_start = None
 
         self.main_menu()
 
@@ -118,7 +123,10 @@ class LabelingTool:
     def calibrate_cameras(self):
         self.clear_root()
 
-        control_frame = tk.Frame(self.root)
+        main_frame = tk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        control_frame = tk.Frame(main_frame)
         control_frame.pack(side=tk.TOP, pady=10)
 
         self.frame_label = tk.Label(control_frame, text="Frame: 0")
@@ -128,12 +136,12 @@ class LabelingTool:
                                command=self.show_frames)
         self.slider.pack(side=tk.LEFT, padx=5)
 
-        skip_frame = tk.Frame(self.root)
+        skip_frame = tk.Frame(main_frame)
         skip_frame.pack(side=tk.TOP, pady=10)
         self.add_skip_buttons(skip_frame)
 
-        control_frame_right = tk.Frame(self.root)
-        control_frame_right.pack(side=tk.RIGHT, padx=10, pady=10)
+        control_frame_right = tk.Frame(main_frame)
+        control_frame_right.pack(side=tk.RIGHT, padx=10, pady=10, fill=tk.Y)
 
         self.labels = ["StartPlatL", "StepL", "StartPlatR", "StepR", "Door", "TransitionL", "TransitionR", "Nose"]
         self.label_colors = self.generate_label_colors(self.labels)
@@ -161,6 +169,21 @@ class LabelingTool:
             tk.Radiobutton(control_frame_right, text=view.capitalize(), variable=self.current_view, value=view).pack(
                 pady=2)
 
+        tk.Label(control_frame_right, text="Contrast").pack(pady=5)
+        self.contrast_var = tk.DoubleVar(value=1.0)
+        tk.Scale(control_frame_right, from_=0.5, to=3.0, orient=tk.HORIZONTAL, resolution=0.1,
+                 variable=self.contrast_var,
+                 command=self.update_contrast_brightness).pack(pady=5)
+
+        tk.Label(control_frame_right, text="Brightness").pack(pady=5)
+        self.brightness_var = tk.DoubleVar(value=1.0)
+        tk.Scale(control_frame_right, from_=0.5, to=3.0, orient=tk.HORIZONTAL, resolution=0.1,
+                 variable=self.brightness_var,
+                 command=self.update_contrast_brightness).pack(pady=5)
+
+        home_button = tk.Button(control_frame_right, text="Home", command=self.reset_view)
+        home_button.pack(pady=5)
+
         save_button = tk.Button(control_frame_right, text="Save Calibration Points",
                                 command=self.save_calibration_points)
         save_button.pack(pady=5)
@@ -170,21 +193,68 @@ class LabelingTool:
         back_button.pack(pady=5)
 
         self.fig, self.axs = plt.subplots(3, 1, figsize=(10, 12))
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
         self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
-        toolbar = NavigationToolbar2Tk(self.canvas, self.root)
-        toolbar.update()
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         self.canvas.mpl_connect("button_press_event", self.on_click)
         self.canvas.mpl_connect("motion_notify_event", self.on_drag)
+        self.canvas.mpl_connect("motion_notify_event", self.update_crosshair)
+        self.canvas.mpl_connect("button_press_event", self.on_mouse_press)
+        self.canvas.mpl_connect("button_release_event", self.on_mouse_release)
+        self.canvas.mpl_connect("motion_notify_event", self.on_mouse_move)
+        self.canvas.mpl_connect("scroll_event", self.on_scroll)  # Add this line
 
-        self.dragging_point = None
-        self.calibration_points_static = {label: {"side": None, "front": None, "overhead": None} for label in self.labels}
+        self.calibration_points_static = {label: {"side": None, "front": None, "overhead": None} for label in
+                                          self.labels}
 
         self.show_frames()
+
+    def on_scroll(self, event):
+        ax = self.axs[["side", "front", "overhead"].index(self.current_view.get())]
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+
+        xdata = event.xdata
+        ydata = event.ydata
+
+        zoom_factor = 0.9 if event.button == 'up' else 1.1  # Reverse the zoom direction
+
+        new_xlim = [xdata + (x - xdata) * zoom_factor for x in xlim]
+        new_ylim = [ydata + (y - ydata) * zoom_factor for y in ylim]
+
+        ax.set_xlim(new_xlim)
+        ax.set_ylim(new_ylim)
+
+        self.canvas.draw_idle()
+
+    def on_mouse_press(self, event):
+        if event.button == MouseButton.MIDDLE:
+            self.panning = True
+            self.pan_start = (event.x, event.y)
+
+    def on_mouse_release(self, event):
+        if event.button == MouseButton.MIDDLE:
+            self.panning = False
+            self.pan_start = None
+
+    def on_mouse_move(self, event):
+        if self.panning and self.pan_start:
+            dx = event.x - self.pan_start[0]
+            dy = event.y - self.pan_start[1]
+            self.pan_start = (event.x, event.y)
+
+            ax = self.axs[["side", "front", "overhead"].index(self.current_view.get())]
+            xlim = ax.get_xlim()
+            ylim = ax.get_ylim()
+
+            scale_x = (xlim[1] - xlim[0]) / self.canvas.get_width_height()[0]
+            scale_y = (ylim[1] - ylim[0]) / self.canvas.get_width_height()[1]
+
+            ax.set_xlim(xlim[0] - dx * scale_x, xlim[1] - dx * scale_x)
+            ax.set_ylim(ylim[0] - dy * scale_y, ylim[1] - dy * scale_y)  # Reverse the panning direction for y-axis
+
+            self.canvas.draw_idle()
 
     def add_skip_buttons(self, parent):
         buttons = [
@@ -222,6 +292,19 @@ class LabelingTool:
                 if point is not None:
                     point.set_sizes([self.marker_size * 10])
         self.canvas.draw()
+
+    def update_contrast_brightness(self, val):
+        self.show_frames()
+
+    def apply_contrast_brightness(self, frame):
+        contrast = self.contrast_var.get()
+        brightness = self.brightness_var.get()
+        pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        enhancer = ImageEnhance.Contrast(pil_img)
+        img_contrast = enhancer.enhance(contrast)
+        enhancer = ImageEnhance.Brightness(img_contrast)
+        img_brightness = enhancer.enhance(brightness)
+        return cv2.cvtColor(np.array(img_brightness), cv2.COLOR_RGB2BGR)
 
     def on_click(self, event):
         if event.inaxes not in self.axs:
@@ -285,6 +368,17 @@ class LabelingTool:
             self.dragging_point.set_offsets((event.xdata, event.ydata))
             self.canvas.draw()
 
+    def update_crosshair(self, event):
+        for line in self.crosshair_lines:
+            line.remove()
+        self.crosshair_lines = []
+
+        if event.inaxes:
+            x, y = event.xdata, event.ydata
+            self.crosshair_lines.append(event.inaxes.axhline(y, color='cyan', linestyle='--', linewidth=0.5))
+            self.crosshair_lines.append(event.inaxes.axvline(x, color='cyan', linestyle='--', linewidth=0.5))
+            self.canvas.draw_idle()
+
     def advance_label(self):
         current_index = self.labels.index(self.current_label.get())
         next_index = (current_index + 1) % len(self.labels)
@@ -335,7 +429,7 @@ class LabelingTool:
         self.frame_label.pack(side=tk.LEFT, padx=5)
 
         self.slider = tk.Scale(control_frame, from_=0, to=self.total_frames - 1, orient=tk.HORIZONTAL, length=600,
-                               command=self.show_frames)
+                               command=self.show_frames_extraction)
         self.slider.pack(side=tk.LEFT, padx=5)
 
         skip_frame = tk.Frame(self.root)
@@ -357,7 +451,7 @@ class LabelingTool:
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.show_frames()
+        self.show_frames_extraction()
 
     def save_extracted_frames(self):
         frame_number = self.slider.get()
@@ -383,7 +477,7 @@ class LabelingTool:
             cv2.imwrite(front_path, frame_front)
             cv2.imwrite(overhead_path, frame_overhead)
 
-    def show_frames(self, val=None):
+    def show_frames_extraction(self, val=None):
         frame_number = self.slider.get()
 
         self.cap_side.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
@@ -408,6 +502,37 @@ class LabelingTool:
             self.axs[1].set_title('Front View')
             self.axs[2].set_title('Overhead View')
 
+            self.canvas.draw()
+
+    def show_frames(self, val=None):
+        frame_number = self.slider.get()
+
+        self.cap_side.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        ret_side, frame_side = self.cap_side.read()
+
+        self.cap_front.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        ret_front, frame_front = self.cap_front.read()
+
+        self.cap_overhead.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        ret_overhead, frame_overhead = self.cap_overhead.read()
+
+        if ret_side and ret_front and ret_overhead:
+            frame_side = self.apply_contrast_brightness(frame_side)
+            frame_front = self.apply_contrast_brightness(frame_front)
+            frame_overhead = self.apply_contrast_brightness(frame_overhead)
+
+            self.axs[0].cla()
+            self.axs[1].cla()
+            self.axs[2].cla()
+
+            self.axs[0].imshow(cv2.cvtColor(frame_side, cv2.COLOR_BGR2RGB))
+            self.axs[1].imshow(cv2.cvtColor(frame_front, cv2.COLOR_BGR2RGB))
+            self.axs[2].imshow(cv2.cvtColor(frame_overhead, cv2.COLOR_BGR2RGB))
+
+            self.axs[0].set_title('Side View')
+            self.axs[1].set_title('Front View')
+            self.axs[2].set_title('Overhead View')
+
             self.show_static_points()
 
             self.canvas.draw()
@@ -420,6 +545,46 @@ class LabelingTool:
                     ax.add_collection(point)
                     point.set_sizes([self.marker_size * 10])
         self.canvas.draw()
+
+    def scroll_y(self, ax, *args):
+        ylim = ax.get_ylim()
+        ax.set_ylim(ylim[0] - float(args[1]) * 0.1, ylim[1] - float(args[1]) * 0.1)
+        self.canvas.draw_idle()
+
+    def scroll_x(self, ax, *args):
+        xlim = ax.get_xlim()
+        ax.set_xlim(xlim[0] + float(args[1]) * 0.1, xlim[1] + float(args[1]) * 0.1)
+        self.canvas.draw_idle()
+
+    def update_scrollregion(self, event):
+        for ax in self.axs:
+            ax.set_xlim(0, self.canvas.get_width_height()[0])
+            ax.set_ylim(0, self.canvas.get_width_height()[1])
+        self.canvas.get_tk_widget().configure(scrollregion=self.canvas.get_tk_widget().bbox("all"))
+
+    def zoom_in(self):
+        ax = self.axs[["side", "front", "overhead"].index(self.current_view.get())]
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+        ax.set_xlim([xlim[0] + (xlim[1] - xlim[0]) * 0.1, xlim[1] - (xlim[1] - xlim[0]) * 0.1])
+        ax.set_ylim([ylim[0] + (ylim[1] - ylim[0]) * 0.1, ylim[1] - (ylim[1] - ylim[0]) * 0.1])
+        self.canvas.draw()
+
+    def zoom_out(self):
+        ax = self.axs[["side", "front", "overhead"].index(self.current_view.get())]
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+        ax.set_xlim([xlim[0] - (xlim[1] - xlim[0]) * 0.1, xlim[1] + (xlim[1] - xlim[0]) * 0.1])
+        ax.set_ylim([ylim[0] - (ylim[1] - ylim[0]) * 0.1, ylim[1] + (ylim[1] - ylim[0]) * 0.1])
+        self.canvas.draw()
+
+    def reset_view(self):
+        for ax in self.axs:
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+        self.contrast_var.set(1.0)
+        self.brightness_var.set(1.0)
+        self.show_frames()
 
     def skip_frames(self, step):
         new_frame_number = self.slider.get() + step
@@ -530,24 +695,6 @@ class LabelingTool:
     def clear_root(self):
         for widget in self.root.winfo_children():
             widget.destroy()
-
-    def setup_zoom_pan(self):
-        self.scale = 1.0
-        self.canvas.mpl_connect('button_press_event', self.on_press)
-        self.canvas.mpl_connect('button_release_event', self.on_release)
-
-        self.toolbar = NavigationToolbar2Tk(self.canvas, self.root)
-        self.toolbar.update()
-
-        self.zoom_active = False
-        self.pan_active = False
-
-    def on_press(self, event):
-        if event.dblclick:
-            self.toolbar.zoom()
-
-    def on_release(self, event):
-        self.toolbar.release(event)
 
 if __name__ == "__main__":
     root = tk.Tk()
