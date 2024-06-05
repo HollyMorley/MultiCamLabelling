@@ -65,6 +65,10 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.backend_bases import MouseButton
 from PIL import Image, ImageTk, ImageEnhance
 
+# import configurations
+import Helpers.MultiCamLabelling_config as config
+from Helpers.CalibrateCams import BasicCalibration
+
 class LabelingTool:
     def __init__(self, root):
         self.root = root
@@ -73,17 +77,17 @@ class LabelingTool:
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
 
-        self.marker_size = 1  # Default marker size
-        self.calibration_points_static = {}  # Ensure initialization
+        self.calibration_points_static = {}
 
         self.crosshair_lines = []
         self.dragging_point = None
         self.panning = False
         self.pan_start = None
 
-        self.marker_size_var = tk.IntVar(value=self.marker_size)
-        self.contrast_var = tk.DoubleVar(value=1.0)
-        self.brightness_var = tk.DoubleVar(value=1.0)
+        self.marker_size = config.DEFAULT_MARKER_SIZE
+        self.marker_size_var = tk.DoubleVar(value=config.DEFAULT_MARKER_SIZE)
+        self.contrast_var = tk.DoubleVar(value=config.DEFAULT_CONTRAST)
+        self.brightness_var = tk.DoubleVar(value=config.DEFAULT_BRIGHTNESS)
 
         self.main_menu()
 
@@ -112,6 +116,8 @@ class LabelingTool:
         self.cap_front = cv2.VideoCapture(self.get_corresponding_video_path('front'))
         self.cap_overhead = cv2.VideoCapture(self.get_corresponding_video_path('overhead'))
 
+        self.calibration_file_path = config.CALIBRATION_SAVE_PATH_TEMPLATE.format(video_name=self.video_name)
+
         extract_frame = tk.Frame(self.root)
         extract_frame.pack(pady=20)
 
@@ -124,6 +130,23 @@ class LabelingTool:
         back_button = tk.Button(extract_frame, text="Back to Main Menu", command=self.main_menu)
         back_button.pack(pady=5)
 
+    def load_calibration_points(self):
+        try:
+            df = pd.read_csv(self.calibration_file_path)
+            df.set_index(["bodyparts", "coords"], inplace=True)
+            for label in df.index.levels[0]:
+                for view in ["side", "front", "overhead"]:
+                    if not pd.isna(df.loc[(label, 'x'), view]):
+                        x, y = df.loc[(label, 'x'), view], df.loc[(label, 'y'), view]
+                        self.calibration_points_static[label][view] = self.axs[
+                            ["side", "front", "overhead"].index(view)].scatter(
+                            x, y, c=self.label_colors[label], s=self.marker_size * 10, label=label
+                        )
+                        self.calibration_points[label][view] = (x, y)
+            messagebox.showinfo("Info", "Calibration points loaded successfully")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load calibration points: {e}")
+
     def calibrate_cameras(self):
         self.clear_root()
 
@@ -133,23 +156,24 @@ class LabelingTool:
         control_frame = tk.Frame(main_frame)
         control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
 
-        # Marker size, contrast, brightness horizontally on the far left
         settings_frame = tk.Frame(control_frame)
         settings_frame.pack(side=tk.LEFT, padx=10)
 
         tk.Label(settings_frame, text="Marker Size").pack(side=tk.LEFT, padx=5)
-        tk.Scale(settings_frame, from_=1, to=5, orient=tk.HORIZONTAL, variable=self.marker_size_var,
+        tk.Scale(settings_frame, from_=config.MIN_MARKER_SIZE, to=config.MAX_MARKER_SIZE, orient=tk.HORIZONTAL,
+                 resolution=config.MARKER_SIZE_STEP, variable=self.marker_size_var,
                  command=self.update_marker_size).pack(side=tk.LEFT, padx=5)
 
         tk.Label(settings_frame, text="Contrast").pack(side=tk.LEFT, padx=5)
-        tk.Scale(settings_frame, from_=0.5, to=3.0, orient=tk.HORIZONTAL, resolution=0.1, variable=self.contrast_var,
+        tk.Scale(settings_frame, from_=config.MIN_CONTRAST, to=config.MAX_CONTRAST, orient=tk.HORIZONTAL,
+                 resolution=config.CONTRAST_STEP, variable=self.contrast_var,
                  command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
 
         tk.Label(settings_frame, text="Brightness").pack(side=tk.LEFT, padx=5)
-        tk.Scale(settings_frame, from_=0.5, to=3.0, orient=tk.HORIZONTAL, resolution=0.1, variable=self.brightness_var,
+        tk.Scale(settings_frame, from_=config.MIN_BRIGHTNESS, to=config.MAX_BRIGHTNESS, orient=tk.HORIZONTAL,
+                 resolution=config.BRIGHTNESS_STEP, variable=self.brightness_var,
                  command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
 
-        # Frame label and slider in the middle
         frame_control = tk.Frame(control_frame)
         frame_control.pack(side=tk.LEFT, padx=20)
 
@@ -160,31 +184,26 @@ class LabelingTool:
                                command=self.show_frames)
         self.slider.pack()
 
-        # Skip buttons stacked vertically under the frame slider
         skip_frame = tk.Frame(frame_control)
         skip_frame.pack()
         self.add_skip_buttons(skip_frame)
 
-        # Home, Save, Back buttons
         button_frame = tk.Frame(control_frame)
         button_frame.pack(side=tk.LEFT, padx=20)
 
         home_button = tk.Button(button_frame, text="Home", command=self.reset_view)
         home_button.pack(pady=5)
 
-        save_button = tk.Button(button_frame, text="Save Calibration Points",
-                                command=self.save_calibration_points)
+        save_button = tk.Button(button_frame, text="Save Calibration Points", command=self.save_calibration_points)
         save_button.pack(pady=5)
 
-        back_button = tk.Button(button_frame, text="Back to Extract Frames Menu",
-                                command=self.extract_frames_menu)
+        back_button = tk.Button(button_frame, text="Back to Extract Frames Menu", command=self.extract_frames_menu)
         back_button.pack(pady=5)
 
-        # Right side for labels
         control_frame_right = tk.Frame(main_frame)
         control_frame_right.pack(side=tk.RIGHT, padx=10, pady=10, fill=tk.Y)
 
-        self.labels = ["StartPlatL", "StepL", "StartPlatR", "StepR", "Door", "TransitionL", "TransitionR", "Nose"]
+        self.labels = config.CALIBRATION_LABELS
         self.label_colors = self.generate_label_colors(self.labels)
         self.current_label = tk.StringVar(value=self.labels[0])
 
@@ -216,10 +235,21 @@ class LabelingTool:
         self.canvas.mpl_connect("button_press_event", self.on_mouse_press)
         self.canvas.mpl_connect("button_release_event", self.on_mouse_release)
         self.canvas.mpl_connect("motion_notify_event", self.on_mouse_move)
-        self.canvas.mpl_connect("scroll_event", self.on_scroll)  # Add this line
+        self.canvas.mpl_connect("scroll_event", self.on_scroll)
 
         self.calibration_points_static = {label: {"side": None, "front": None, "overhead": None} for label in
                                           self.labels}
+
+        if os.path.exists(self.calibration_file_path):
+            if messagebox.askyesno("Calibration Found", "Calibration labels found. Do you want to load them?"):
+                self.load_calibration_points()
+        else:
+            default_calibration_file = config.DEFAULT_CALIBRATION_FILE_PATH
+            if os.path.exists(default_calibration_file):
+                if messagebox.askyesno("Default Calibration",
+                                       "No specific calibration file found. Do you want to load the default calibration labels?"):
+                    self.calibration_file_path = default_calibration_file
+                    self.load_calibration_points()
 
         self.show_frames()
 
@@ -401,7 +431,7 @@ class LabelingTool:
             self.current_label.set('')  # No more labels to advance to
 
     def save_calibration_points(self):
-        calibration_path = f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/CameraCalibration/{self.video_name}/calibration_labels.csv"
+        calibration_path = config.CALIBRATION_SAVE_PATH_TEMPLATE.format(video_name=self.video_name)
         os.makedirs(os.path.dirname(calibration_path), exist_ok=True)
 
         data = {"bodyparts": [], "coords": [], "side": [], "front": [], "overhead": []}
@@ -478,9 +508,12 @@ class LabelingTool:
         ret_overhead, frame_overhead = self.cap_overhead.read()
 
         if ret_side and ret_front and ret_overhead:
-            side_path = f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Side/{self.video_name}/img{frame_number}.png"
-            front_path = f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Front/{self.video_name}/img{frame_number}.png"
-            overhead_path = f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Overhead/{self.video_name}/img{frame_number}.png"
+            side_path = config.FRAME_SAVE_PATH_TEMPLATE["side"].format(video_name=self.video_name,
+                                                                       frame_number=frame_number)
+            front_path = config.FRAME_SAVE_PATH_TEMPLATE["front"].format(video_name=self.video_name,
+                                                                         frame_number=frame_number)
+            overhead_path = config.FRAME_SAVE_PATH_TEMPLATE["overhead"].format(video_name=self.video_name,
+                                                                               frame_number=frame_number)
 
             os.makedirs(os.path.dirname(side_path), exist_ok=True)
             os.makedirs(os.path.dirname(front_path), exist_ok=True)
@@ -595,8 +628,8 @@ class LabelingTool:
         for ax in self.axs:
             ax.set_xlim(0, 1)
             ax.set_ylim(0, 1)
-        self.contrast_var.set(1.0)
-        self.brightness_var.set(1.0)
+        self.contrast_var.set(config.DEFAULT_CONTRAST)
+        self.brightness_var.set(config.DEFAULT_BRIGHTNESS)
         self.show_frames()
 
     def skip_frames(self, step):
@@ -607,24 +640,36 @@ class LabelingTool:
 
     def label_frames_menu(self):
         self.clear_root()
-        folder_path = filedialog.askdirectory(title="Select Extracted Frames Folder")
+        calibration_folder_path = filedialog.askdirectory(title="Select Calibration Folder")
 
-        if not folder_path:
+        if not calibration_folder_path:
             return
 
-        self.extracted_frames_path = folder_path
-        self.current_frame_index = 0
+        self.video_name = os.path.basename(calibration_folder_path)
+        self.video_date = self.extract_date_from_folder_path(calibration_folder_path)
+        self.calibration_file_path = os.path.join(calibration_folder_path, "calibration_labels.csv")
 
-        self.video_name = os.path.basename(folder_path)
-        self.video_date = self.extract_date_from_folder_path(folder_path)
-        calibration_data_path = f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/CameraCalibration/{self.video_name}/calibration_matrices.csv"
-
-        if not os.path.exists(calibration_data_path):
+        if not os.path.exists(self.calibration_file_path):
             messagebox.showerror("Error", "No corresponding camera calibration data found.")
             return
 
+        self.extracted_frames_path = {
+            'side': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Side/{self.video_name}",
+            'front': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Front/{self.video_name}",
+            'overhead': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Overhead/{self.video_name}"
+        }
+
+        if not all(os.path.exists(path) for path in self.extracted_frames_path.values()):
+            messagebox.showerror("Error", "One or more corresponding extracted frames folders not found.")
+            return
+
+        self.current_frame_index = 0
+
+        # prompt to inform user that the frames will be loaded
+        messagebox.showinfo("Info", "Loading frames...")
         self.load_frames()
-        self.load_calibration_data(calibration_data_path)
+        messagebox.showinfo("Info", "Frames loaded successfully")
+        self.load_calibration_data(self.calibration_file_path)
         self.setup_labeling_ui()
 
     def extract_date_from_folder_path(self, folder_path):
@@ -635,59 +680,121 @@ class LabelingTool:
         return None
 
     def load_frames(self):
-        self.frames = []
-        for view in ['Side', 'Front', 'Overhead']:
-            view_path = os.path.join(self.extracted_frames_path, view)
-            frame_files = sorted(os.listdir(view_path))
-            self.frames.append([cv2.imread(os.path.join(view_path, file)) for file in frame_files])
+        self.frames = {'side': [], 'front': [], 'overhead': []}
+        for view in self.frames.keys():
+            frame_files = sorted(os.listdir(self.extracted_frames_path[view]))
+            self.frames[view] = [cv2.imread(os.path.join(self.extracted_frames_path[view], file)) for file in
+                                 frame_files]
+
+        # Ensure all views have the same number of frames
+        min_frame_count = min(len(self.frames[view]) for view in self.frames)
+        for view in self.frames:
+            self.frames[view] = self.frames[view][:min_frame_count]
 
     def load_calibration_data(self, calibration_data_path):
-        calibration_data = pd.read_pickle(calibration_data_path)
-        self.cameras_extrinsics = calibration_data['extrinsics']
-        self.cameras_intrinsics = calibration_data['intrinsics']
+        try:
+            calibration_coordinates = pd.read_csv(calibration_data_path)
+
+            calib = BasicCalibration(calibration_coordinates)
+            cameras_extrinsics = calib.estimate_cams_pose()
+            cameras_intrisinics = calib.cameras_intrinsics
+
+            self.calibration_data = {
+                'extrinsics': cameras_extrinsics,
+                'intrinsics': cameras_intrisinics
+            }
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load calibration data: {e}")
 
     def setup_labeling_ui(self):
-        labeling_frame = tk.Frame(self.root)
-        labeling_frame.pack(pady=20)
+        self.clear_root()
 
-        self.canvas_side = tk.Canvas(labeling_frame, width=int(1920), height=int(230))
-        self.canvas_side.grid(row=0, column=0)
-        self.canvas_front = tk.Canvas(labeling_frame, width=int(296), height=int(320))
-        self.canvas_front.grid(row=1, column=0)
-        self.canvas_overhead = tk.Canvas(labeling_frame, width=int(992), height=int(116))
-        self.canvas_overhead.grid(row=2, column=0)
+        main_frame = tk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True)
 
-        control_frame = tk.Frame(self.root)
-        control_frame.pack(pady=10)
+        control_frame = tk.Frame(main_frame)
+        control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
 
-        prev_button = tk.Button(control_frame, text="Previous Frame", command=lambda: self.change_frame(-1))
-        prev_button.grid(row=0, column=0, padx=5)
+        settings_frame = tk.Frame(control_frame)
+        settings_frame.pack(side=tk.LEFT, padx=10)
 
-        next_button = tk.Button(control_frame, text="Next Frame", command=lambda: self.change_frame(1))
-        next_button.grid(row=0, column=1, padx=5)
+        tk.Label(settings_frame, text="Marker Size").pack(side=tk.LEFT, padx=5)
+        tk.Scale(settings_frame, from_=config.MIN_MARKER_SIZE, to=config.MAX_MARKER_SIZE, orient=tk.HORIZONTAL,
+                 resolution=config.MARKER_SIZE_STEP, variable=self.marker_size_var,
+                 command=self.update_marker_size).pack(side=tk.LEFT, padx=5)
 
-        body_parts = ["Nose", "EarL", "EarR", "Back1", "Back2", "Tail1", "ForepawToeR", "HindpawToeL"]  # Example parts
+        tk.Label(settings_frame, text="Contrast").pack(side=tk.LEFT, padx=5)
+        tk.Scale(settings_frame, from_=config.MIN_CONTRAST, to=config.MAX_CONTRAST, orient=tk.HORIZONTAL,
+                 resolution=config.CONTRAST_STEP, variable=self.contrast_var,
+                 command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
+
+        tk.Label(settings_frame, text="Brightness").pack(side=tk.LEFT, padx=5)
+        tk.Scale(settings_frame, from_=config.MIN_BRIGHTNESS, to=config.MAX_BRIGHTNESS, orient=tk.HORIZONTAL,
+                 resolution=config.BRIGHTNESS_STEP, variable=self.brightness_var,
+                 command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
+
+        frame_control = tk.Frame(control_frame)
+        frame_control.pack(side=tk.LEFT, padx=20)
+
+        self.frame_label = tk.Label(frame_control, text=f"Frame: 1/{len(self.frames['side'])}")
+        self.frame_label.pack()
+
+        self.slider = tk.Scale(frame_control, from_=0, to=len(self.frames['side']) - 1, orient=tk.HORIZONTAL,
+                               length=400,
+                               command=self.update_frame_label)
+        self.slider.pack()
+
+        skip_frame = tk.Frame(frame_control)
+        skip_frame.pack()
+        self.add_skip_buttons(skip_frame)
+
+        button_frame = tk.Frame(control_frame)
+        button_frame.pack(side=tk.LEFT, padx=20)
+
+        home_button = tk.Button(button_frame, text="Home", command=self.reset_view)
+        home_button.pack(pady=5)
+
+        save_button = tk.Button(button_frame, text="Save Labels", command=self.save_labels)
+        save_button.pack(pady=5)
+
+        back_button = tk.Button(button_frame, text="Back to Main Menu", command=self.main_menu)
+        back_button.pack(pady=5)
+
+        control_frame_right = tk.Frame(main_frame)
+        control_frame_right.pack(side=tk.RIGHT, padx=10, pady=10, fill=tk.Y)
+
+        body_parts = config.BODY_PART_LABELS
         self.body_part_var = tk.StringVar(value=body_parts[0])
-        body_part_menu = tk.OptionMenu(control_frame, self.body_part_var, *body_parts)
-        body_part_menu.grid(row=0, column=2, padx=5)
+        for body_part in body_parts:
+            tk.Radiobutton(control_frame_right, text=body_part, variable=self.body_part_var, value=body_part).pack(
+                pady=2)
 
-        save_button = tk.Button(control_frame, text="Save Labels", command=self.save_labels)
-        save_button.grid(row=0, column=3, padx=5)
+        self.fig, self.axs = plt.subplots(3, 1, figsize=(10, 12))
+        self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.red_line_view_var = tk.StringVar(value="None")
-        for i, view in enumerate(["Side", "Front", "Overhead", "None"]):
-            tk.Radiobutton(control_frame, text=view, variable=self.red_line_view_var, value=view).grid(row=1, column=i, padx=5)
+        self.canvas.mpl_connect("button_press_event", self.on_click)
+        self.canvas.mpl_connect("motion_notify_event", self.on_drag)
+        self.canvas.mpl_connect("motion_notify_event", self.update_crosshair)
+        self.canvas.mpl_connect("button_press_event", self.on_mouse_press)
+        self.canvas.mpl_connect("button_release_event", self.on_mouse_release)
+        self.canvas.mpl_connect("motion_notify_event", self.on_mouse_move)
+        self.canvas.mpl_connect("scroll_event", self.on_scroll)
 
         self.display_frame()
 
-    def change_frame(self, step):
-        self.current_frame_index += step
-        self.current_frame_index = max(0, min(self.current_frame_index, len(self.frames[0]) - 1))
-        self.display_frame()
+    # def change_frame(self, step):
+    #     self.current_frame_index += step
+    #     self.current_frame_index = max(0, min(self.current_frame_index, len(self.frames['side']) - 1))
+    #     self.frame_count_label.config(text=f"Frame: {self.current_frame_index + 1}/{len(self.frames['side'])}")
+    #     self.display_frame()
 
     def display_frame(self):
-        for i, canvas in enumerate([self.canvas_side, self.canvas_front, self.canvas_overhead]):
-            frame = cv2.cvtColor(self.frames[i][self.current_frame_index], cv2.COLOR_BGR2RGB)
+        for i, (canvas, view) in enumerate(
+                zip([self.canvas_side, self.canvas_front, self.canvas_overhead], ['side', 'front', 'overhead'])):
+            frame = cv2.cvtColor(self.frames[view][self.current_frame_index], cv2.COLOR_BGR2RGB)
             frame = Image.fromarray(frame)
             imgtk = ImageTk.PhotoImage(image=frame)
             canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
