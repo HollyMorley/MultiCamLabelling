@@ -55,7 +55,7 @@ Skeleton:
 '''
 
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 import cv2
 import os
 import pandas as pd
@@ -78,6 +78,7 @@ class LabelingTool:
 
         self.calibration_points_static = {}
         self.body_part_points_static = {}
+        self.body_part_points = {}
 
         self.crosshair_lines = []
         self.dragging_point = None
@@ -272,17 +273,16 @@ class LabelingTool:
 
     def update_marker_size(self, val):
         self.marker_size = self.marker_size_var.get()
-        if hasattr(self, 'body_part_points') and self.body_part_points:
-            current_points = self.body_part_points[self.current_frame_index]
-            for label, views in current_points.items():
-                for view, point in views.items():
-                    if point is not None:
-                        point.set_sizes([self.marker_size * 10])
-            self.canvas.draw()
+        points_static = self.calibration_points_static if self.mode == 'calibration' else self.body_part_points
+        for label, points in points_static.items():
+            for view, point in points.items():
+                if point is not None:
+                    point.set_sizes([self.marker_size * 10])
+        self.canvas.draw()
 
     def update_contrast_brightness(self, val):
         if hasattr(self, 'frames'):
-            self.display_frame()
+            self.show_frames()
 
     def apply_contrast_brightness(self, frame):
         contrast = self.contrast_var.get()
@@ -581,24 +581,34 @@ class LabelingTool:
         frame_number = self.current_frame_index
         self.frame_label.config(text=f"Frame: {frame_number}/{self.total_frames - 1}")
 
-        frame_side = self.frames['side'][frame_number]
-        frame_front = self.frames['front'][frame_number]
-        frame_overhead = self.frames['overhead'][frame_number]
+        self.cap_side.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        ret_side, frame_side = self.cap_side.read()
 
-        frame_side = self.apply_contrast_brightness(frame_side)
-        frame_front = self.apply_contrast_brightness(frame_front)
-        frame_overhead = self.apply_contrast_brightness(frame_overhead)
+        self.cap_front.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        ret_front, frame_front = self.cap_front.read()
 
-        self.axs[0].cla()
-        self.axs[1].cla()
-        self.axs[2].cla()
+        self.cap_overhead.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        ret_overhead, frame_overhead = self.cap_overhead.read()
 
-        self.axs[0].imshow(cv2.cvtColor(frame_side, cv2.COLOR_BGR2RGB))
-        self.axs[1].imshow(cv2.cvtColor(frame_front, cv2.COLOR_BGR2RGB))
-        self.axs[2].imshow(cv2.cvtColor(frame_overhead, cv2.COLOR_BGR2RGB))
+        if ret_side and ret_front and ret_overhead:
+            frame_side = self.apply_contrast_brightness(frame_side)
+            frame_front = self.apply_contrast_brightness(frame_front)
+            frame_overhead = self.apply_contrast_brightness(frame_overhead)
 
-        self.show_body_part_points()
-        self.canvas.draw()
+            self.axs[0].cla()
+            self.axs[1].cla()
+            self.axs[2].cla()
+
+            self.axs[0].imshow(cv2.cvtColor(frame_side, cv2.COLOR_BGR2RGB))
+            self.axs[1].imshow(cv2.cvtColor(frame_front, cv2.COLOR_BGR2RGB))
+            self.axs[2].imshow(cv2.cvtColor(frame_overhead, cv2.COLOR_BGR2RGB))
+
+            self.axs[0].set_title('Side View')
+            self.axs[1].set_title('Front View')
+            self.axs[2].set_title('Overhead View')
+
+            self.show_static_points()
+            self.canvas.draw()
 
     def show_static_points(self):
         points_static = self.calibration_points_static if self.mode == 'calibration' else self.body_part_points
@@ -612,60 +622,48 @@ class LabelingTool:
 
     def label_frames_menu(self):
         self.clear_root()
-        folder_path = filedialog.askdirectory(title="Select Extracted Frames Folder")
+        self.mode = 'labeling'
+        calibration_folder_path = filedialog.askdirectory(title="Select Calibration Folder")
 
-        if not folder_path:
+        if not calibration_folder_path:
             return
 
-        # Extract the video name from the folder path
-        self.video_name = os.path.basename(folder_path)
+        self.video_name = os.path.basename(calibration_folder_path)
+        self.video_date = self.extract_date_from_folder_path(calibration_folder_path)
+        self.calibration_file_path = os.path.join(calibration_folder_path, "calibration_labels.csv")
 
-        # Ensure correct path structure
-        self.extracted_frames_path = {
-            'side': os.path.join("X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Side",
-                                 self.video_name),
-            'front': os.path.join("X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Front",
-                                  self.video_name),
-            'overhead': os.path.join("X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Overhead",
-                                     self.video_name)
-        }
-        print(f"Extracted frames path: {self.extracted_frames_path}")  # Debug print
-
-        self.current_frame_index = 0
-
-        self.video_date = self.extract_date_from_folder_path(folder_path)
-        calibration_data_path = config.CALIBRATION_SAVE_PATH_TEMPLATE.format(video_name=self.video_name)
-
-        if not os.path.exists(calibration_data_path):
+        if not os.path.exists(self.calibration_file_path):
             messagebox.showerror("Error", "No corresponding camera calibration data found.")
             return
 
+        self.extracted_frames_path = {
+            'side': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Side/{self.video_name}",
+            'front': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Front/{self.video_name}",
+            'overhead': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Overhead/{self.video_name}"
+        }
+
+        if not all(os.path.exists(path) for path in self.extracted_frames_path.values()):
+            messagebox.showerror("Error", "One or more corresponding extracted frames folders not found.")
+            return
+
+        self.current_frame_index = 0
+
+        # Notify user about loading frames
+        loading_popup = tk.Toplevel(self.root)
+        loading_popup.geometry("300x100")  # set size
+        tk.Label(loading_popup, text="Loading frames, please wait...").pack()
+        self.root.update_idletasks()
+
         self.load_frames()
-        self.load_calibration_data(calibration_data_path)
+
+        loading_popup.destroy()
+
+        self.load_calibration_data(self.calibration_file_path)
         self.setup_labeling_ui()
 
-    def load_frames(self):
-        self.frames = {'side': [], 'front': [], 'overhead': []}
-        for view in self.frames.keys():
-            view_path = self.extracted_frames_path[view]
-            print(f"Checking path for {view} view: {view_path}")  # Debug print
-            if not os.path.exists(view_path):
-                messagebox.showerror("Error", f"Extracted frames folder for {view} view not found.")
-                return
-
-            frame_files = sorted(
-                os.listdir(view_path),
-                key=lambda x: os.path.getctime(os.path.join(view_path, x))
-            )
-            self.frames[view] = [cv2.imread(os.path.join(view_path, file)) for file in frame_files]
-
-        # Ensure all views have the same number of frames
-        min_frame_count = min(len(self.frames[view]) for view in self.frames)
-        for view in self.frames:
-            self.frames[view] = self.frames[view][:min_frame_count]
-
-        self.total_frames = min_frame_count  # Ensure total_frames is defined
-        print(f"Total frames loaded: {self.total_frames}")  # Debug print
+        self.cap_side = cv2.VideoCapture(self.get_corresponding_video_path('side'))
+        self.cap_front = cv2.VideoCapture(self.get_corresponding_video_path('front'))
+        self.cap_overhead = cv2.VideoCapture(self.get_corresponding_video_path('overhead'))
 
     def extract_date_from_folder_path(self, folder_path):
         parts = folder_path.split(os.sep)
@@ -673,6 +671,21 @@ class LabelingTool:
             if part.isdigit() and len(part) == 8:
                 return part
         return None
+
+    def load_frames(self):
+        self.frames = {'side': [], 'front': [], 'overhead': []}
+        for view in self.frames.keys():
+            frame_files = sorted(os.listdir(self.extracted_frames_path[view]),
+                                 key=lambda x: os.path.getctime(os.path.join(self.extracted_frames_path[view], x)))
+            self.frames[view] = [cv2.imread(os.path.join(self.extracted_frames_path[view], file)) for file in
+                                 frame_files]
+
+        # Ensure all views have the same number of frames
+        min_frame_count = min(len(self.frames[view]) for view in self.frames)
+        for view in self.frames:
+            self.frames[view] = self.frames[view][:min_frame_count]
+
+        self.total_frames = min_frame_count  # Ensure total_frames is defined
 
     def load_calibration_data(self, calibration_data_path):
         try:
