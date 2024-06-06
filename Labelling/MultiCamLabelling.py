@@ -666,7 +666,9 @@ class LabelFramesTool:
         self.label_colors = self.generate_label_colors(self.labels)
         self.current_label = tk.StringVar(value=self.labels[0])
         self.current_view = tk.StringVar(value="side")
-        self.body_part_points = {label: {"side": None, "front": None, "overhead": None} for label in self.labels}
+        self.body_part_points = {}
+        self.body_part_coordinates = {}
+        self.frames = {'side': [], 'front': [], 'overhead': []}
 
         self.crosshair_lines = []
         self.dragging_point = None
@@ -674,6 +676,7 @@ class LabelFramesTool:
         self.pan_start = None
 
         self.label_frames_menu()
+
 
     def label_frames_menu(self):
         self.main_tool.clear_root()
@@ -706,6 +709,7 @@ class LabelFramesTool:
 
         self.show_loading_popup()
 
+        self.frames = {'side': [], 'front': [], 'overhead': []}
         self.root.after(100, self.load_frames)
 
     def show_loading_popup(self):
@@ -713,7 +717,7 @@ class LabelFramesTool:
         self.loading_popup.geometry("300x100")
         self.loading_popup.title("Loading")
         label = tk.Label(self.loading_popup, text="Loading frames, please wait...")
-        label.pack(pady=20)
+        label.pack(pady=20, padx=20)
         self.root.update_idletasks()
 
     def extract_date_from_folder_path(self, folder_path):
@@ -724,14 +728,12 @@ class LabelFramesTool:
         return None
 
     def load_frames(self):
-        self.frames = {'side': [], 'front': [], 'overhead': []}
         for view in self.frames.keys():
             frame_files = sorted(os.listdir(self.extracted_frames_path[view]),
                                  key=lambda x: os.path.getctime(os.path.join(self.extracted_frames_path[view], x)))
             self.frames[view] = [cv2.imread(os.path.join(self.extracted_frames_path[view], file)) for file in
                                  frame_files]
 
-        # Ensure all views have the same number of frames
         min_frame_count = min(len(self.frames[view]) for view in self.frames)
         for view in self.frames:
             self.frames[view] = self.frames[view][:min_frame_count]
@@ -741,21 +743,14 @@ class LabelFramesTool:
         self.load_calibration_data(self.calibration_file_path)
         self.setup_labeling_ui()
 
-    def load_calibration_data(self, calibration_data_path):
-        try:
-            calibration_coordinates = pd.read_csv(calibration_data_path)
-
-            calib = BasicCalibration(calibration_coordinates)
-            cameras_extrinsics = calib.estimate_cams_pose()
-            cameras_intrisinics = calib.cameras_intrinsics
-
-            self.calibration_data = {
-                'extrinsics': cameras_extrinsics,
-                'intrinsics': cameras_intrisinics
-            }
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load calibration data: {e}")
+        self.body_part_points = {
+            frame_idx: {label: {"side": None, "front": None, "overhead": None} for label in self.labels}
+            for frame_idx in range(len(self.frames['side']))
+        }
+        self.body_part_coordinates = {
+            frame_idx: {label: {"side": None, "front": None, "overhead": None} for label in self.labels}
+            for frame_idx in range(len(self.frames['side']))
+        }
 
     def setup_labeling_ui(self):
         self.main_tool.clear_root()
@@ -809,6 +804,14 @@ class LabelFramesTool:
         back_button = tk.Button(button_frame, text="Back to Main Menu", command=self.main_tool.main_menu)
         back_button.pack(pady=5)
 
+        # Move view selection buttons to the top right
+        view_frame = tk.Frame(control_frame)
+        view_frame.pack(side=tk.RIGHT, padx=10, pady=5)
+        self.current_view = tk.StringVar(value="side")
+        for view in ["side", "front", "overhead"]:
+            tk.Radiobutton(view_frame, text=view.capitalize(), variable=self.current_view, value=view).pack(side=tk.TOP,
+                                                                                                            pady=2)
+
         control_frame_right = tk.Frame(main_frame)
         control_frame_right.pack(side=tk.RIGHT, padx=10, pady=10, fill=tk.Y)
 
@@ -821,21 +824,12 @@ class LabelFramesTool:
             frame_idx
             in range(len(self.frames['side']))}
 
+        # Create smaller buttons for body part labels with colors
         for label in self.labels:
             color = self.label_colors[label]
-            label_frame = tk.Frame(control_frame_right)
-            label_frame.pack(fill=tk.X, pady=2)
-            color_box = tk.Label(label_frame, bg=color, width=2)
-            color_box.pack(side=tk.LEFT, padx=5)
-            label_button = tk.Radiobutton(label_frame, text=label, variable=self.current_label, value=label,
-                                          indicatoron=0, width=20)
-            label_button.pack(side=tk.LEFT)
-
-        self.current_view = tk.StringVar(value="side")
-        for view in ["side", "front", "overhead"]:
-            tk.Radiobutton(control_frame_right, text=view.capitalize(), variable=self.current_view,
-                           value=view).pack(
-                pady=2)
+            label_button = tk.Radiobutton(control_frame_right, text=label, variable=self.current_label, value=label,
+                                          indicatoron=0, width=20, bg=color, font=("Helvetica", 8))
+            label_button.pack(fill=tk.X, pady=2)
 
         self.fig, self.axs = plt.subplots(3, 1, figsize=(10, 12))
         self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
@@ -852,7 +846,12 @@ class LabelFramesTool:
 
         self.display_frame()
 
-        print('Temp')
+    def on_label_select(self, event):
+        # Get the selected label from the listbox and update the current label
+        selected_index = event.widget.curselection()
+        if selected_index:
+            selected_label = event.widget.get(selected_index)
+            self.current_label.set(selected_label)
 
     def skip_labeling_frames(self, step):
         self.current_frame_index += step
@@ -875,44 +874,99 @@ class LabelFramesTool:
     def show_body_part_points(self):
         current_points = self.body_part_points[self.current_frame_index]
         for label, views in current_points.items():
-            for view, point in views.items():
-                if point is not None:
+            for view, coords in views.items():
+                if coords is not None:
+                    x, y = coords
                     ax = self.axs[["side", "front", "overhead"].index(view)]
-                    ax.add_collection(point)
-                    point.set_sizes([self.marker_size_var.get() * 10])
+                    ax.scatter(x, y, c=self.label_colors[label], s=self.marker_size_var.get() * 10, label=label)
         self.canvas.draw()
 
-    def save_labels(self):
-        side_path = config.LABEL_SAVE_PATH_TEMPLATE['side'].format(video_name=self.video_name)
-        front_path = config.LABEL_SAVE_PATH_TEMPLATE['front'].format(video_name=self.video_name)
-        overhead_path = config.LABEL_SAVE_PATH_TEMPLATE['overhead'].format(video_name=self.video_name)
+    def on_click(self, event):
+        if event.inaxes not in self.axs:
+            return
 
-        os.makedirs(os.path.dirname(side_path), exist_ok=True)
-        os.makedirs(os.path.dirname(front_path), exist_ok=True)
-        os.makedirs(os.path.dirname(overhead_path), exist_ok=True)
+        view = self.current_view.get()
+        ax = self.axs[["side", "front", "overhead"].index(view)]
+        label = self.current_label.get()
+        color = self.label_colors[label]
+        marker_size = self.marker_size_var.get()
 
-        # Save labels for each view
+        frame_points = self.body_part_points[self.current_frame_index]
 
-        # Placeholder for actual saving logic
-        messagebox.showinfo("Info", "Labels saved successfully")
+        if event.button == MouseButton.RIGHT:
+            if event.key == 'shift':
+                self.delete_closest_point(ax, event, frame_points)
+            else:
+                if frame_points[label][view] is not None:
+                    frame_points[label][view] = None
+                frame_points[label][view] = (event.xdata, event.ydata)
+                ax.scatter(event.xdata, event.ydata, c=color, s=marker_size * 10, label=label)
+                self.canvas.draw()
+                self.advance_label()
+        elif event.button == MouseButton.LEFT:
+            self.dragging_point = self.find_closest_point(ax, event, frame_points)
 
-    def generate_label_colors(self, labels):
-        colormap = plt.get_cmap('hsv')
-        colors = [colormap(i / len(labels)) for i in range(len(labels))]
-        return {label: self.rgb_to_hex(color) for label, color in zip(labels, colors)}
+    def on_drag(self, event):
+        if self.dragging_point is None or event.inaxes not in self.axs:
+            return
 
-    def rgb_to_hex(self, color):
-        return "#{:02x}{:02x}{:02x}".format(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255))
+        label, view, _ = self.dragging_point
+        ax = self.axs[["side", "front", "overhead"].index(view)]
+
+        if event.button == MouseButton.LEFT:
+            self.body_part_points[self.current_frame_index][label][view] = (event.xdata, event.ydata)
+            self.display_frame()
+
+    def find_closest_point(self, ax, event, frame_points):
+        min_dist = float('inf')
+        closest_point = None
+        for label, views in frame_points.items():
+            for view, coords in views.items():
+                if coords is not None:
+                    x, y = coords
+                    dist = np.hypot(x - event.xdata, y - event.ydata)
+                    if dist < min_dist:
+                        min_dist = dist
+                        closest_point = (label, view, coords)
+        return closest_point if min_dist < 10 else None
+
+    def delete_closest_point(self, ax, event, frame_points):
+        min_dist = float('inf')
+        closest_point_label = None
+        closest_view = None
+        for label, views in frame_points.items():
+            for view, coords in views.items():
+                if coords is not None:
+                    x, y = coords
+                    dist = np.hypot(x - event.xdata, y - event.ydata)
+                    if dist < min_dist:
+                        min_dist = dist
+                        closest_point_label = label
+                        closest_view = view
+
+        if closest_point_label and closest_view:
+            frame_points[closest_point_label][closest_view] = None
+            self.display_frame()
+
+    def load_calibration_data(self, calibration_data_path):
+        try:
+            calibration_coordinates = pd.read_csv(calibration_data_path)
+
+            calib = BasicCalibration(calibration_coordinates)
+            cameras_extrinsics = calib.estimate_cams_pose()
+            cameras_intrisinics = calib.cameras_intrinsics
+
+            self.calibration_data = {
+                'extrinsics': cameras_extrinsics,
+                'intrinsics': cameras_intrisinics
+            }
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load calibration data: {e}")
 
     def update_marker_size(self, val):
         self.marker_size = self.marker_size_var.get()
-        if hasattr(self, 'body_part_points') and self.body_part_points:
-            current_points = self.body_part_points[self.current_frame_index]
-            for label, views in current_points.items():
-                for view, point in views.items():
-                    if point is not None:
-                        point.set_sizes([self.marker_size * 10])
-            self.canvas.draw()
+        self.display_frame()
 
     def update_contrast_brightness(self, val):
         if hasattr(self, 'frames'):
@@ -955,6 +1009,8 @@ class LabelFramesTool:
         if event.button == 2:
             self.panning = False
             self.pan_start = None
+        elif event.button == MouseButton.LEFT:
+            self.dragging_point = None
 
     def on_mouse_move(self, event):
         if self.panning and self.pan_start:
@@ -972,70 +1028,6 @@ class LabelFramesTool:
             ax.set_xlim(xlim[0] - dx * scale_x, xlim[1] - dx * scale_x)
             ax.set_ylim(ylim[0] - dy * scale_y, ylim[1] - dy * scale_y)
             self.canvas.draw_idle()
-
-    def on_click(self, event):
-        if event.inaxes not in self.axs:
-            return
-
-        view = self.current_view.get()
-        ax = self.axs[["side", "front", "overhead"].index(view)]
-        label = self.current_label.get()
-        color = self.label_colors[label]
-        marker_size = self.marker_size_var.get()
-
-        frame_points = self.body_part_points[self.current_frame_index]
-
-        if event.button == MouseButton.RIGHT:
-            if event.key == 'shift':
-                self.delete_closest_point(ax, event, frame_points)
-            else:
-                if frame_points[label][view] is not None:
-                    frame_points[label][view].remove()
-                frame_points[label][view] = (event.xdata, event.ydata)
-                ax.scatter(event.xdata, event.ydata, c=color, s=marker_size * 10, label=label)
-                self.canvas.draw()
-                self.advance_label()
-        elif event.button == MouseButton.LEFT:
-            self.dragging_point = self.find_closest_point(ax, event, frame_points)
-
-    def find_closest_point(self, ax, event, points_static):
-        min_dist = float('inf')
-        closest_point = None
-        for label, points in points_static.items():
-            if points[self.current_view.get()] is not None:
-                x, y = points[self.current_view.get()].get_offsets()[0]
-                dist = np.hypot(x - event.xdata, y - event.ydata)
-                if dist < min_dist:
-                    min_dist = dist
-                    closest_point = points[self.current_view.get()]
-        return closest_point if min_dist < 10 else None
-
-    def delete_closest_point(self, ax, event, points_static):
-        min_dist = float('inf')
-        closest_point_label = None
-        for label, points in points_static.items():
-            if points[self.current_view.get()] is not None:
-                x, y = points[self.current_view.get()].get_offsets()[0]
-                dist = np.hypot(x - event.xdata, y - event.ydata)
-                if dist < min_dist:
-                    min_dist = dist
-                    closest_point_label = label
-
-        if closest_point_label:
-            points_static[closest_point_label][self.current_view.get()].remove()
-            points_static[closest_point_label][self.current_view.get()] = None
-            self.canvas.draw()
-
-    def on_drag(self, event):
-        if self.dragging_point is None or event.inaxes not in self.axs:
-            return
-
-        view = self.current_view.get()
-        ax = self.axs[["side", "front", "overhead"].index(view)]
-
-        if event.button == MouseButton.LEFT:
-            self.dragging_point.set_offsets((event.xdata, event.ydata))
-            self.canvas.draw()
 
     def update_crosshair(self, event):
         for line in self.crosshair_lines:
@@ -1064,7 +1056,46 @@ class LabelFramesTool:
         self.brightness_var.set(config.DEFAULT_BRIGHTNESS)
         self.show_frames()
 
+    def save_labels(self):
+        side_path = config.LABEL_SAVE_PATH_TEMPLATE['side'].format(video_name=self.video_name)
+        front_path = config.LABEL_SAVE_PATH_TEMPLATE['front'].format(video_name=self.video_name)
+        overhead_path = config.LABEL_SAVE_PATH_TEMPLATE['overhead'].format(video_name=self.video_name)
+
+        os.makedirs(os.path.dirname(side_path), exist_ok=True)
+        os.makedirs(os.path.dirname(front_path), exist_ok=True)
+        os.makedirs(os.path.dirname(overhead_path), exist_ok=True)
+
+        self.body_part_coordinates = self.body_part_points
+
+        # Saving the body part coordinates
+        data = {"frame_index": [], "label": [], "view": [], "x": [], "y": []}
+        for frame_idx, labels in self.body_part_coordinates.items():
+            for label, views in labels.items():
+                for view, coords in views.items():
+                    if coords is not None:
+                        data["frame_index"].append(frame_idx)
+                        data["label"].append(label)
+                        data["view"].append(view)
+                        data["x"].append(coords[0])
+                        data["y"].append(coords[1])
+
+        df = pd.DataFrame(data)
+        df.to_csv(side_path, index=False)
+        df.to_csv(front_path, index=False)
+        df.to_csv(overhead_path, index=False)
+
+        messagebox.showinfo("Info", "Labels saved successfully")
+
+    def generate_label_colors(self, labels):
+        colormap = plt.get_cmap('hsv')
+        colors = [colormap(i / len(labels)) for i in range(len(labels))]
+        return {label: self.rgb_to_hex(color) for label, color in zip(labels, colors)}
+
+    def rgb_to_hex(self, color):
+        return "#{:02x}{:02x}{:02x}".format(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255))
 if __name__ == "__main__":
     root = tk.Tk()
     app = MainTool(root)
     root.mainloop()
+
+
