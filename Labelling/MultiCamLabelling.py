@@ -67,8 +67,8 @@ class ExtractFramesTool:
         self.cap_overhead = None
         self.total_frames = 0
         self.current_frame_index = 0
-        self.contrast_var = tk.DoubleVar(value=1.0)
-        self.brightness_var = tk.DoubleVar(value=1.0)
+        self.contrast_var = tk.DoubleVar(value=config.DEFAULT_CONTRAST)
+        self.brightness_var = tk.DoubleVar(value=config.DEFAULT_BRIGHTNESS)
 
         self.extract_frames()
 
@@ -150,12 +150,12 @@ class ExtractFramesTool:
         ret_overhead, frame_overhead = self.cap_overhead.read()
 
         if ret_side and ret_front and ret_overhead:
-            side_path = config.FRAME_SAVE_PATH_TEMPLATE["side"].format(video_name=self.video_name,
-                                                                       frame_number=frame_number)
-            front_path = config.FRAME_SAVE_PATH_TEMPLATE["front"].format(video_name=self.video_name,
-                                                                         frame_number=frame_number)
-            overhead_path = config.FRAME_SAVE_PATH_TEMPLATE["overhead"].format(video_name=self.video_name,
-                                                                               frame_number=frame_number)
+            side_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["side"].format(video_name=self.video_name),
+                                     f"img{frame_number}.png")
+            front_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["front"].format(video_name=self.video_name),
+                                      f"img{frame_number}.png")
+            overhead_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["overhead"].format(video_name=self.video_name),
+                                         f"img{frame_number}.png")
 
             os.makedirs(os.path.dirname(side_path), exist_ok=True)
             os.makedirs(os.path.dirname(front_path), exist_ok=True)
@@ -235,9 +235,9 @@ class CalibrateCamerasTool:
         self.cap_overhead = None
         self.total_frames = 0
         self.current_frame_index = 0
-        self.contrast_var = tk.DoubleVar(value=1.0)
-        self.brightness_var = tk.DoubleVar(value=1.0)
-        self.marker_size_var = tk.DoubleVar(value=10)  # Corrected this line
+        self.contrast_var = tk.DoubleVar(value=config.DEFAULT_CONTRAST)
+        self.brightness_var = tk.DoubleVar(value=config.DEFAULT_BRIGHTNESS)
+        self.marker_size_var = tk.DoubleVar(value=config.DEFAULT_MARKER_SIZE)
         self.mode = 'calibration'
 
         self.calibration_points_static = {}
@@ -269,8 +269,8 @@ class CalibrateCamerasTool:
         self.cap_front = cv2.VideoCapture(self.get_corresponding_video_path('front'))
         self.cap_overhead = cv2.VideoCapture(self.get_corresponding_video_path('overhead'))
 
-        self.calibration_file_path = config.CALIBRATION_SAVE_PATH_TEMPLATE #todo check this works f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/CameraCalibration/{self.video_name}/calibration_labels.csv"
-        default_calibration_file = config.DEFAULT_CALIBRATION_FILE_PATH #todo check this works f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/CameraCalibration/default_calibration_labels.csv"
+        self.calibration_file_path = config.CALIBRATION_SAVE_PATH_TEMPLATE.format(video_name=self.video_name)
+        default_calibration_file = config.DEFAULT_CALIBRATION_FILE_PATH
 
         self.mode = 'calibration'
 
@@ -284,16 +284,16 @@ class CalibrateCamerasTool:
         settings_frame.pack(side=tk.LEFT, padx=10)
 
         tk.Label(settings_frame, text="Marker Size").pack(side=tk.LEFT, padx=5)
-        tk.Scale(settings_frame, from_=0.5, to=5.0, orient=tk.HORIZONTAL, resolution=0.1,
-                 variable=self.marker_size_var, command=self.update_marker_size).pack(side=tk.LEFT, padx=5)
+        tk.Scale(settings_frame, from_=config.MIN_MARKER_SIZE, to=config.MAX_MARKER_SIZE, orient=tk.HORIZONTAL,
+                 resolution=config.MARKER_SIZE_STEP, variable=self.marker_size_var, command=self.update_marker_size).pack(side=tk.LEFT, padx=5)
 
         tk.Label(settings_frame, text="Contrast").pack(side=tk.LEFT, padx=5)
-        tk.Scale(settings_frame, from_=0.5, to=2.0, orient=tk.HORIZONTAL, resolution=0.1,
-                 variable=self.contrast_var, command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
+        tk.Scale(settings_frame, from_=config.MIN_CONTRAST, to=config.MAX_CONTRAST, orient=tk.HORIZONTAL,
+                 resolution=config.CONTRAST_STEP, variable=self.contrast_var, command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
 
         tk.Label(settings_frame, text="Brightness").pack(side=tk.LEFT, padx=5)
-        tk.Scale(settings_frame, from_=0.5, to=2.0, orient=tk.HORIZONTAL, resolution=0.1,
-                 variable=self.brightness_var, command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
+        tk.Scale(settings_frame, from_=config.MIN_BRIGHTNESS, to=config.MAX_BRIGHTNESS, orient=tk.HORIZONTAL,
+                 resolution=config.BRIGHTNESS_STEP, variable=self.brightness_var, command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
 
         frame_control = tk.Frame(control_frame)
         frame_control.pack(side=tk.LEFT, padx=20)
@@ -335,8 +335,7 @@ class CalibrateCamerasTool:
             label_button.pack(side=tk.LEFT)
 
         for view in ["side", "front", "overhead"]:
-            tk.Radiobutton(control_frame_right, text=view.capitalize(), variable=self.current_view, value=view).pack(
-                pady=2)
+            tk.Radiobutton(control_frame_right, text=view.capitalize(), variable=self.current_view, value=view).pack(pady=2)
 
         self.fig, self.axs = plt.subplots(3, 1, figsize=(10, 12))
         self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
@@ -351,18 +350,13 @@ class CalibrateCamerasTool:
         self.canvas.mpl_connect("motion_notify_event", self.on_mouse_move)
         self.canvas.mpl_connect("scroll_event", self.on_scroll)
 
-        self.calibration_points_static = {label: {"side": None, "front": None, "overhead": None} for label in
-                                          self.labels}
-
-        print(f"Checking for calibration file at: {self.calibration_file_path}")
-        print(f"Checking for default calibration file at: {default_calibration_file}")
+        self.calibration_points_static = {label: {"side": None, "front": None, "overhead": None} for label in self.labels}
 
         if os.path.exists(self.calibration_file_path):
-            print("Calibration file found.")
             response = messagebox.askyesnocancel("Calibration Found",
                                                  "Calibration labels found. Do you want to load them? (Yes to load current, No to load default, Cancel to skip)")
             if response is None:
-                print("No calibration file loaded.")
+                pass
             elif response:
                 self.load_calibration_points(self.calibration_file_path)
             else:
@@ -371,7 +365,6 @@ class CalibrateCamerasTool:
                 else:
                     messagebox.showinfo("Default Calibration Not Found", "Default calibration file not found.")
         else:
-            print("No calibration file found.")
             if os.path.exists(default_calibration_file):
                 if messagebox.askyesno("Default Calibration",
                                        "No specific calibration file found. Do you want to load the default calibration labels?"):
@@ -383,14 +376,12 @@ class CalibrateCamerasTool:
 
     def load_calibration_points(self, file_path):
         try:
-            print(f"Loading calibration points from: {file_path}")
             df = pd.read_csv(file_path)
             df.set_index(["bodyparts", "coords"], inplace=True)
             for label in df.index.levels[0]:
                 for view in ["side", "front", "overhead"]:
                     if not pd.isna(df.loc[(label, 'x'), view]):
                         x, y = df.loc[(label, 'x'), view], df.loc[(label, 'y'), view]
-                        print(f"Plotting {label} at ({x}, {y}) in {view} view")
                         self.calibration_points_static[label][view] = self.axs[
                             ["side", "front", "overhead"].index(view)].scatter(
                             x, y, c=self.label_colors[label], s=self.marker_size_var.get() * 10, label=label
@@ -398,7 +389,6 @@ class CalibrateCamerasTool:
             self.canvas.draw()
             messagebox.showinfo("Info", "Calibration points loaded successfully")
         except Exception as e:
-            print(f"Failed to load calibration points: {e}")
             messagebox.showerror("Error", f"Failed to load calibration points: {e}")
 
     def update_frame_label(self, val):
@@ -418,9 +408,9 @@ class CalibrateCamerasTool:
         new_frame_number = self.current_frame_index + step
         new_frame_number = max(0, min(new_frame_number, self.total_frames - 1))
         self.current_frame_index = new_frame_number
-        self.slider.set(new_frame_number)  # Update the slider value
+        self.slider.set(new_frame_number)
         self.frame_label.config(text=f"Frame: {new_frame_number}/{self.total_frames - 1}")
-        self.show_frames()  # Call show_frames to update the display
+        self.show_frames()
 
     def parse_video_path(self, video_path):
         video_file = os.path.basename(video_path)
@@ -438,7 +428,7 @@ class CalibrateCamerasTool:
         return os.path.join(base_path, corresponding_file)
 
     def save_calibration_points(self):
-        calibration_path = config.CALIBRATION_SAVE_PATH_TEMPLATE #todo check this works f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/CameraCalibration/{self.video_name}/calibration_labels.csv"
+        calibration_path = config.CALIBRATION_SAVE_PATH_TEMPLATE.format(video_name=self.video_name)
         os.makedirs(os.path.dirname(calibration_path), exist_ok=True)
 
         data = {"bodyparts": [], "coords": [], "side": [], "front": [], "overhead": []}
@@ -547,26 +537,13 @@ class CalibrateCamerasTool:
             if event.key == 'shift':
                 self.delete_closest_point(ax, event)
             else:
-                closest_point_label = self.find_closest_label(ax, event)
-                if closest_point_label is not None:
-                    if self.calibration_points_static[closest_point_label][view] is not None:
-                        self.calibration_points_static[closest_point_label][view].remove()
-                    self.calibration_points_static[closest_point_label][view] = ax.scatter(event.xdata, event.ydata, c=color, s=marker_size * 10, label=closest_point_label)
+                label = self.current_label.get()
+                if self.calibration_points_static[label][view] is not None:
+                    self.calibration_points_static[label][view].remove()
+                self.calibration_points_static[label][view] = ax.scatter(event.xdata, event.ydata, c=color, s=marker_size * 10, label=label)
                 self.canvas.draw()
         elif event.button == MouseButton.LEFT:
             self.dragging_point = self.find_closest_point(ax, event)
-
-    def find_closest_label(self, ax, event):
-        min_dist = float('inf')
-        closest_label = None
-        for label, points in self.calibration_points_static.items():
-            if points[self.current_view.get()] is not None:
-                x, y = points[self.current_view.get()].get_offsets()[0]
-                dist = np.hypot(x - event.xdata, y - event.ydata)
-                if dist < min_dist:
-                    min_dist = dist
-                    closest_label = label
-        return closest_label if min_dist < 10 else None
 
     def find_closest_point(self, ax, event):
         min_dist = float('inf')
@@ -622,8 +599,8 @@ class CalibrateCamerasTool:
         for ax in self.axs:
             ax.set_xlim(0, 1)
             ax.set_ylim(0, 1)
-        self.contrast_var.set(1.0)
-        self.brightness_var.set(1.0)
+        self.contrast_var.set(config.DEFAULT_CONTRAST)
+        self.brightness_var.set(config.DEFAULT_BRIGHTNESS)
         self.show_frames()
 
     def show_frames(self, val=None):
@@ -657,7 +634,7 @@ class CalibrateCamerasTool:
             self.axs[2].set_title('Overhead View')
 
             self.show_static_points()
-            self.canvas.draw_idle()  # Use draw_idle for efficient updating
+            self.canvas.draw_idle()
 
     def show_static_points(self):
         for label, points in self.calibration_points_static.items():
@@ -669,8 +646,6 @@ class CalibrateCamerasTool:
         self.canvas.draw()
 
 
-
-
 class LabelFramesTool:
     def __init__(self, root, main_tool):
         self.root = root
@@ -679,9 +654,9 @@ class LabelFramesTool:
         self.video_date = ""
         self.extracted_frames_path = {}
         self.current_frame_index = 0
-        self.contrast_var = tk.DoubleVar(value=1.0)
-        self.brightness_var = tk.DoubleVar(value=1.0)
-        self.marker_size_var = tk.DoubleVar(value=10)
+        self.contrast_var = tk.DoubleVar(value=config.DEFAULT_CONTRAST)
+        self.brightness_var = tk.DoubleVar(value=config.DEFAULT_BRIGHTNESS)
+        self.marker_size_var = tk.DoubleVar(value=config.DEFAULT_MARKER_SIZE)
         self.mode = 'labeling'
         self.calibration_data = None
         self.fig = None
@@ -717,12 +692,11 @@ class LabelFramesTool:
             messagebox.showerror("Error", "No corresponding camera calibration data found.")
             return
 
-        self.extracted_frames_path = config.FRAME_SAVE_PATH_TEMPLATE #todo check this works
-        # self.extracted_frames_path = {
-        #     'side': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Side/{self.video_name}",
-        #     'front': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Front/{self.video_name}",
-        #     'overhead': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Overhead/{self.video_name}"
-        # }
+        self.extracted_frames_path = {
+            'side': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Side/{self.video_name}",
+            'front': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Front/{self.video_name}",
+            'overhead': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Overhead/{self.video_name}"
+        }
 
         if not all(os.path.exists(path) for path in self.extracted_frames_path.values()):
             messagebox.showerror("Error", "One or more corresponding extracted frames folders not found.")
@@ -730,18 +704,17 @@ class LabelFramesTool:
 
         self.current_frame_index = 0
 
-        # Notify user about loading frames
-        loading_popup = tk.Toplevel(self.root)
-        loading_popup.geometry("300x100")  # set size
-        tk.Label(loading_popup, text="Loading frames, please wait...").pack()
+        self.show_loading_popup()
+
+        self.root.after(100, self.load_frames)
+
+    def show_loading_popup(self):
+        self.loading_popup = tk.Toplevel(self.root)
+        self.loading_popup.geometry("300x100")
+        self.loading_popup.title("Loading")
+        label = tk.Label(self.loading_popup, text="Loading frames, please wait...")
+        label.pack(pady=20)
         self.root.update_idletasks()
-
-        self.load_frames()
-
-        loading_popup.destroy()
-
-        self.load_calibration_data(self.calibration_file_path)
-        self.setup_labeling_ui()
 
     def extract_date_from_folder_path(self, folder_path):
         parts = folder_path.split(os.sep)
@@ -762,6 +735,11 @@ class LabelFramesTool:
         min_frame_count = min(len(self.frames[view]) for view in self.frames)
         for view in self.frames:
             self.frames[view] = self.frames[view][:min_frame_count]
+
+        self.loading_popup.destroy()
+
+        self.load_calibration_data(self.calibration_file_path)
+        self.setup_labeling_ui()
 
     def load_calibration_data(self, calibration_data_path):
         try:
@@ -874,6 +852,8 @@ class LabelFramesTool:
 
         self.display_frame()
 
+        print('Temp')
+
     def skip_labeling_frames(self, step):
         self.current_frame_index += step
         self.current_frame_index = max(0, min(self.current_frame_index, len(self.frames['side']) - 1))
@@ -903,9 +883,9 @@ class LabelFramesTool:
         self.canvas.draw()
 
     def save_labels(self):
-        side_path = config.LABEL_SAVE_PATH_TEMPLATE['side'] # todo check this works f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Side/{self.video_name}/CollectedData_Holly.csv"
-        front_path = config.LABEL_SAVE_PATH_TEMPLATE['front'] # todo check this worksf"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Front/{self.video_name}/CollectedData_Holly.csv"
-        overhead_path = config.LABEL_SAVE_PATH_TEMPLATE['overhead'] # todo check this worksf"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Overhead/{self.video_name}/CollectedData_Holly.csv"
+        side_path = config.LABEL_SAVE_PATH_TEMPLATE['side'].format(video_name=self.video_name)
+        front_path = config.LABEL_SAVE_PATH_TEMPLATE['front'].format(video_name=self.video_name)
+        overhead_path = config.LABEL_SAVE_PATH_TEMPLATE['overhead'].format(video_name=self.video_name)
 
         os.makedirs(os.path.dirname(side_path), exist_ok=True)
         os.makedirs(os.path.dirname(front_path), exist_ok=True)
@@ -915,8 +895,6 @@ class LabelFramesTool:
 
         # Placeholder for actual saving logic
         messagebox.showinfo("Info", "Labels saved successfully")
-
-
 
     def generate_label_colors(self, labels):
         colormap = plt.get_cmap('hsv')
@@ -1013,8 +991,8 @@ class LabelFramesTool:
             else:
                 if frame_points[label][view] is not None:
                     frame_points[label][view].remove()
-                frame_points[label][view] = ax.scatter(event.xdata, event.ydata, c=color, s=marker_size * 10,
-                                                       label=label)
+                frame_points[label][view] = (event.xdata, event.ydata)
+                ax.scatter(event.xdata, event.ydata, c=color, s=marker_size * 10, label=label)
                 self.canvas.draw()
                 self.advance_label()
         elif event.button == MouseButton.LEFT:
@@ -1082,8 +1060,8 @@ class LabelFramesTool:
         for ax in self.axs:
             ax.set_xlim(0, 1)
             ax.set_ylim(0, 1)
-        self.contrast_var.set(1.0)
-        self.brightness_var.set(1.0)
+        self.contrast_var.set(config.DEFAULT_CONTRAST)
+        self.brightness_var.set(config.DEFAULT_BRIGHTNESS)
         self.show_frames()
 
 if __name__ == "__main__":
