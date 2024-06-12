@@ -23,8 +23,8 @@ BODY_PART_LABELS = ["Nose", "EarL", "EarR", "Back1", "Back2", "Back3", "Back4", 
                     "HindpawAnkleR", "HindpawShoulderR", "HindpawToeL", "HindpawAnkleL", "HindpawShoulderL"]
 
 # Marker Size
-DEFAULT_MARKER_SIZE = 3
-MIN_MARKER_SIZE = 0.5
+DEFAULT_MARKER_SIZE = 1
+MIN_MARKER_SIZE = 0.1
 MAX_MARKER_SIZE = 5
 MARKER_SIZE_STEP = 0.1
 

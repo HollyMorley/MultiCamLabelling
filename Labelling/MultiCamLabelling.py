@@ -666,9 +666,12 @@ class LabelFramesTool:
         self.label_colors = self.generate_label_colors(self.labels)
         self.current_label = tk.StringVar(value=self.labels[0])
         self.current_view = tk.StringVar(value="side")
+        self.projection_view = tk.StringVar(value="side") # view to project points from
         self.body_part_points = {}
-        self.body_part_coordinates = {}
+        self.cam_reprojected_points = {'near': {}, 'far': {}}
         self.frames = {'side': [], 'front': [], 'overhead': []}
+        self.projection_lines = {'side': None, 'front': None, 'overhead': None}
+        self.P = None
 
         self.crosshair_lines = []
         self.dragging_point = None
@@ -747,10 +750,6 @@ class LabelFramesTool:
             frame_idx: {label: {"side": None, "front": None, "overhead": None} for label in self.labels}
             for frame_idx in range(len(self.frames['side']))
         }
-        self.body_part_coordinates = {
-            frame_idx: {label: {"side": None, "front": None, "overhead": None} for label in self.labels}
-            for frame_idx in range(len(self.frames['side']))
-        }
 
     def setup_labeling_ui(self):
         self.main_tool.clear_root()
@@ -807,10 +806,19 @@ class LabelFramesTool:
         # Move view selection buttons to the top right
         view_frame = tk.Frame(control_frame)
         view_frame.pack(side=tk.RIGHT, padx=10, pady=5)
+        tk.Label(view_frame, text="Label View").pack()
         self.current_view = tk.StringVar(value="side")
         for view in ["side", "front", "overhead"]:
             tk.Radiobutton(view_frame, text=view.capitalize(), variable=self.current_view, value=view).pack(side=tk.TOP,
                                                                                                             pady=2)
+
+        projection_frame = tk.Frame(control_frame)
+        projection_frame.pack(side=tk.RIGHT, padx=10, pady=5)
+        tk.Label(projection_frame, text="Projection View").pack()
+        self.projection_view = tk.StringVar(value="side")
+        for view in ["side", "front", "overhead"]:
+            tk.Radiobutton(projection_frame, text=view.capitalize(), variable=self.projection_view, value=view).pack(
+                side=tk.TOP, pady=2)
 
         control_frame_right = tk.Frame(main_frame)
         control_frame_right.pack(side=tk.RIGHT, padx=10, pady=10, fill=tk.Y)
@@ -824,12 +832,14 @@ class LabelFramesTool:
             frame_idx
             in range(len(self.frames['side']))}
 
-        # Create smaller buttons for body part labels with colors
+        # Create buttons for body part labels with colors
+        self.label_buttons = []
         for label in self.labels:
             color = self.label_colors[label]
             label_button = tk.Radiobutton(control_frame_right, text=label, variable=self.current_label, value=label,
-                                          indicatoron=0, width=20, bg=color, font=("Helvetica", 8))
+                                          indicatoron=0, width=20, bg=color, font=("Helvetica", 8), command=lambda l=label: self.on_label_select(l))
             label_button.pack(fill=tk.X, pady=2)
+            self.label_buttons.append(label_button)
 
         self.fig, self.axs = plt.subplots(3, 1, figsize=(10, 12))
         self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
@@ -846,12 +856,166 @@ class LabelFramesTool:
 
         self.display_frame()
 
-    def on_label_select(self, event):
-        # Get the selected label from the listbox and update the current label
-        selected_index = event.widget.curselection()
-        if selected_index:
-            selected_label = event.widget.get(selected_index)
-            self.current_label.set(selected_label)
+
+    def get_p(self, view):
+        if self.calibration_data:
+            # Camera intrinsics
+            K = self.calibration_data['intrinsics'][view]
+
+            # Camera extrinsics
+            R = self.calibration_data['extrinsics'][view]['rotm']
+            t = self.calibration_data['extrinsics'][view]['tvec']
+
+            # Ensure t is a column vector
+            if t.ndim == 1:
+                t = t[:, np.newaxis]
+
+            # Form the projection matrix
+            self.P = np.dot(K, np.hstack((R, t)))
+
+    def get_camera_center(self, view):
+        if self.calibration_data:
+            # Extract the rotation matrix and translation vector
+            R = self.calibration_data['extrinsics'][view]['rotm']
+            t = self.calibration_data['extrinsics'][view]['tvec']
+
+            # Compute the camera center in world coordinates
+            camera_center = -np.dot(np.linalg.inv(R), t)
+
+            return camera_center.flatten()  # Flatten to make it a 1D array
+
+    def find_projection(self, view, bp):
+        self.get_p(view)  # Ensure projection matrix is updated
+        # Find 3D point with self.P and the current 2D point
+        if self.body_part_points[self.current_frame_index][bp][view] is not None:
+            x, y = self.body_part_points[self.current_frame_index][bp][view]
+
+            if x is not None and y is not None:
+                # Create the homogeneous coordinates for the 2D point
+                uv = np.array([x, y, 1.0])
+
+                # Compute the pseudo-inverse of the projection matrix
+                P_inv = np.linalg.pinv(self.P)
+
+                # Find the 3D point in homogeneous coordinates
+                X = np.dot(P_inv, uv)
+
+                # Normalize to get the 3D point
+                X /= X[-1]
+
+                return X[:3]  # Return only the x, y, z components
+        return None
+
+    def get_line_equation(self, point_3d, camera_center):
+        # Extract the coordinates of the points
+        x1, y1, z1 = point_3d
+        x2, y2, z2 = camera_center
+
+        def line_at_t(t):
+            x = x1 + t * (x2 - x1)
+            y = y1 + t * (y2 - y1)
+            z = z1 + t * (z2 - z1)
+            return x, y, z
+
+        return line_at_t
+
+    def find_t_for_coordinate(self, val, coord_index, point_3d, camera_center):
+        x1, y1, z1 = point_3d
+        x2, y2, z2 = camera_center
+
+        if coord_index == 0:  # x-coordinate
+            t = (val - x1) / (x2 - x1)
+        elif coord_index == 1:  # y-coordinate
+            t = (val - y1) / (y2 - y1)
+        elif coord_index == 2:  # z-coordinate
+            t = (val - z1) / (z2 - z1)
+        else:
+            raise ValueError("coord_index must be 0 (x), 1 (y), or 2 (z)")
+
+        return t
+
+    def find_3d_edges(self, view, bp):
+        # Get the 3D coordinates of the body part
+        point_3d = self.find_projection(view, bp)
+
+        # Get the camera center
+        camera_center = self.get_camera_center(view)
+
+        if point_3d is not None and camera_center is not None:
+            # Get the line equation
+            line_at_t = self.get_line_equation(point_3d, camera_center)
+
+            # Get the 3D coordinates of the near edge, ie y=0
+            y = 0
+            t_near = self.find_t_for_coordinate(y, 1, point_3d, camera_center)
+            near_edge = line_at_t(t_near)
+
+            # Get the 3D coordinates of the far edge
+            y = self.calibration_data['belt points WCS'].T[1].max()
+            t_far = self.find_t_for_coordinate(y, 1, point_3d, camera_center)
+            far_edge = line_at_t(t_far)
+
+            return near_edge, far_edge
+
+        return None, None
+
+    def reproject_3d_to_2d(self):
+        view = self.projection_view.get()
+        bp = self.current_label.get()
+
+        # reset the reprojected points
+        self.cam_reprojected_points['near'] = {}
+        self.cam_reprojected_points['far'] = {}
+
+        near_edge, far_edge = self.find_3d_edges(view, bp)
+        if near_edge is not None and far_edge is not None:
+            # Define the views and exclude the projection view
+            views = ['side', 'front', 'overhead']
+            views.remove(view)
+
+            for wcs in [near_edge, far_edge]:
+                # Loop through the other views
+                for other_view in views:
+                    CCS_repr, _ = cv2.projectPoints(
+                        wcs,
+                        cv2.Rodrigues(self.calibration_data['extrinsics'][other_view]['rotm'])[0],
+                        self.calibration_data['extrinsics'][other_view]['tvec'],
+                        self.calibration_data['intrinsics'][other_view],
+                        np.array([]),
+                    )
+                    self.cam_reprojected_points['near' if wcs is near_edge else 'far'][other_view] = CCS_repr[
+                        0].flatten()
+
+    def draw_reprojected_points(self):
+        self.reproject_3d_to_2d()
+        for view in ['side', 'front', 'overhead']:
+            if view != self.projection_view.get():
+                ax = self.axs[["side", "front", "overhead"].index(view)]
+                # Clear previous lines if they exist
+                if self.projection_lines[view] is not None:
+                    self.projection_lines[view].remove()
+                    self.projection_lines[view] = None
+
+                frame = cv2.cvtColor(self.frames[view][self.current_frame_index], cv2.COLOR_BGR2RGB)
+                frame = self.apply_contrast_brightness(frame)
+                ax.imshow(frame)
+                ax.set_title(f'{view.capitalize()} View')
+                ax.axis('off')
+
+                if view in self.cam_reprojected_points['near'] and view in self.cam_reprojected_points['far']:
+                    near_point = self.cam_reprojected_points['near'][view]
+                    far_point = self.cam_reprojected_points['far'][view]
+
+                    # Draw the line between near and far points and store it
+                    self.projection_lines[view], = ax.plot([near_point[0], far_point[0]], [near_point[1], far_point[1]],
+                                                           'r-', linewidth=0.5, linestyle='--')
+
+        self.show_body_part_points()  # Redraw body part points to ensure they are displayed correctly
+        self.canvas.draw_idle()
+
+    def on_label_select(self, label):
+        self.current_label.set(label)
+        self.draw_reprojected_points()
 
     def skip_labeling_frames(self, step):
         self.current_frame_index += step
@@ -869,6 +1033,7 @@ class LabelFramesTool:
             ax.axis('off')
 
         self.show_body_part_points()
+        self.draw_reprojected_points()  # Call to update reprojected points
         self.canvas.draw()
 
     def show_body_part_points(self):
@@ -903,6 +1068,7 @@ class LabelFramesTool:
                 ax.scatter(event.xdata, event.ydata, c=color, s=marker_size * 10, label=label)
                 self.canvas.draw()
                 self.advance_label()
+                self.draw_reprojected_points()  # Call to update reprojected points
         elif event.button == MouseButton.LEFT:
             self.dragging_point = self.find_closest_point(ax, event, frame_points)
 
@@ -915,7 +1081,8 @@ class LabelFramesTool:
 
         if event.button == MouseButton.LEFT:
             self.body_part_points[self.current_frame_index][label][view] = (event.xdata, event.ydata)
-            self.display_frame()
+            self.show_body_part_points()
+            self.draw_reprojected_points()  # Call to update reprojected points
 
     def find_closest_point(self, ax, event, frame_points):
         min_dist = float('inf')
@@ -955,10 +1122,14 @@ class LabelFramesTool:
             calib = BasicCalibration(calibration_coordinates)
             cameras_extrinsics = calib.estimate_cams_pose()
             cameras_intrisinics = calib.cameras_intrinsics
+            belt_points_WCS = calib.belt_coords_WCS
+            belt_points_CCS = calib.belt_coords_CCS
 
             self.calibration_data = {
                 'extrinsics': cameras_extrinsics,
-                'intrinsics': cameras_intrisinics
+                'intrinsics': cameras_intrisinics,
+                'belt points WCS': belt_points_WCS,
+                'belt points CCS': belt_points_CCS
             }
 
         except Exception as e:
@@ -966,11 +1137,18 @@ class LabelFramesTool:
 
     def update_marker_size(self, val):
         self.marker_size = self.marker_size_var.get()
-        self.display_frame()
+        self.show_body_part_points()
 
+    # def update_contrast_brightness(self, val):
+    #     self.display_frame()
     def update_contrast_brightness(self, val):
-        if hasattr(self, 'frames'):
-            self.display_frame()
+        current_xlim = [ax.get_xlim() for ax in self.axs]
+        current_ylim = [ax.get_ylim() for ax in self.axs]
+        self.display_frame()
+        for ax, xlim, ylim in zip(self.axs, current_xlim, current_ylim):
+            ax.set_xlim(xlim)
+            ax.set_ylim(ylim)
+        self.canvas.draw_idle()
 
     def apply_contrast_brightness(self, frame):
         contrast = self.contrast_var.get()
@@ -1047,14 +1225,16 @@ class LabelFramesTool:
             self.current_label.set(self.labels[next_index])
         else:
             self.current_label.set('')  # No more labels to advance to
+        self.draw_reprojected_points()  # Update the reprojected points for the new label
 
     def reset_view(self):
         for ax in self.axs:
-            ax.set_xlim(0, 1)
-            ax.set_ylim(0, 1)
+            ax.set_xlim(0, ax.get_images()[0].get_array().shape[1])
+            ax.set_ylim(ax.get_images()[0].get_array().shape[0], 0)
         self.contrast_var.set(config.DEFAULT_CONTRAST)
         self.brightness_var.set(config.DEFAULT_BRIGHTNESS)
-        self.show_frames()
+        self.marker_size_var.set(config.DEFAULT_MARKER_SIZE)
+        self.display_frame()
 
     def save_labels(self):
         side_path = config.LABEL_SAVE_PATH_TEMPLATE['side'].format(video_name=self.video_name)
@@ -1065,11 +1245,9 @@ class LabelFramesTool:
         os.makedirs(os.path.dirname(front_path), exist_ok=True)
         os.makedirs(os.path.dirname(overhead_path), exist_ok=True)
 
-        self.body_part_coordinates = self.body_part_points
-
         # Saving the body part coordinates
         data = {"frame_index": [], "label": [], "view": [], "x": [], "y": []}
-        for frame_idx, labels in self.body_part_coordinates.items():
+        for frame_idx, labels in self.body_part_points.items():
             for label, views in labels.items():
                 for view, coords in views.items():
                     if coords is not None:
@@ -1097,5 +1275,3 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = MainTool(root)
     root.mainloop()
-
-
