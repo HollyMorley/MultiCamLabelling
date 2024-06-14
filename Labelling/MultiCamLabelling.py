@@ -4,6 +4,8 @@ import cv2
 import os
 import pandas as pd
 import numpy as np
+import mpld3
+from mpld3 import plugins
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.backend_bases import MouseButton
@@ -81,6 +83,7 @@ class ExtractFramesTool:
             return
 
         self.video_name, self.video_date, self.camera_view = self.parse_video_path(self.video_path)
+        self.video_name = os.path.splitext(self.video_name)[0]  # Remove the .avi extension #todo check this works ok
         self.cap_side = cv2.VideoCapture(self.video_path)
         self.total_frames = int(self.cap_side.get(cv2.CAP_PROP_FRAME_COUNT))
         self.current_frame_index = 0
@@ -350,6 +353,7 @@ class CalibrateCamerasTool:
         self.canvas.mpl_connect("motion_notify_event", self.on_mouse_move)
         self.canvas.mpl_connect("scroll_event", self.on_scroll)
 
+
         self.calibration_points_static = {label: {"side": None, "front": None, "overhead": None} for label in self.labels}
 
         if os.path.exists(self.calibration_file_path):
@@ -458,13 +462,6 @@ class CalibrateCamerasTool:
 
     def rgb_to_hex(self, color):
         return "#{:02x}{:02x}{:02x}".format(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255))
-
-    def update_marker_size(self, val):
-        for label, coords in self.calibration_points_static.items():
-            for view, point in coords.items():
-                if point is not None:
-                    point.set_sizes([self.marker_size_var.get() * 10])
-        self.canvas.draw()
 
     def update_contrast_brightness(self, val):
         self.show_frames()
@@ -672,6 +669,9 @@ class LabelFramesTool:
         self.frames = {'side': [], 'front': [], 'overhead': []}
         self.projection_lines = {'side': None, 'front': None, 'overhead': None}
         self.P = None
+        self.tooltip = None
+        self.label_buttons = []
+        self.tooltip_window = None
 
         self.crosshair_lines = []
         self.dragging_point = None
@@ -691,6 +691,7 @@ class LabelFramesTool:
             return
 
         self.video_name = os.path.basename(calibration_folder_path)
+        self.video_name = os.path.splitext(self.video_name)[0]  # Remove the .avi extension # todo check this works ok
         self.video_date = self.extract_date_from_folder_path(calibration_folder_path)
         self.calibration_file_path = os.path.join(calibration_folder_path, "calibration_labels.csv")
 
@@ -803,7 +804,6 @@ class LabelFramesTool:
         back_button = tk.Button(button_frame, text="Back to Main Menu", command=self.main_tool.main_menu)
         back_button.pack(pady=5)
 
-        # Move view selection buttons to the top right
         view_frame = tk.Frame(control_frame)
         view_frame.pack(side=tk.RIGHT, padx=10, pady=5)
         tk.Label(view_frame, text="Label View").pack()
@@ -821,7 +821,9 @@ class LabelFramesTool:
                 side=tk.TOP, pady=2)
 
         control_frame_right = tk.Frame(main_frame)
-        control_frame_right.pack(side=tk.RIGHT, padx=10, pady=10, fill=tk.Y)
+        # control_frame_right.pack(side=tk.RIGHT, fill=tk.Y)  # Use the remaining space
+        control_frame_right.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)  # Use the remaining space
+
 
         self.labels = config.BODY_PART_LABELS
         self.label_colors = self.generate_label_colors(self.labels)
@@ -829,22 +831,36 @@ class LabelFramesTool:
 
         self.body_part_points = {
             frame_idx: {label: {"side": None, "front": None, "overhead": None} for label in self.labels} for
-            frame_idx
-            in range(len(self.frames['side']))}
+            frame_idx in range(len(self.frames['side']))
+        }
 
-        # Create buttons for body part labels with colors
-        self.label_buttons = []
+        self.label_canvas = tk.Canvas(control_frame_right, width=150)  # Set a fixed width for the label canvas
+        self.label_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)  # Do not expand to use only necessary space
+        self.label_scrollbar = tk.Scrollbar(control_frame_right, orient=tk.VERTICAL, command=self.label_canvas.yview)
+        self.label_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.label_canvas.configure(yscrollcommand=self.label_scrollbar.set)
+
+        self.label_frame = tk.Frame(self.label_canvas)
+        self.label_canvas.create_window((0, 0), window=self.label_frame, anchor="nw")
+        self.label_frame.bind("<Configure>",
+                              lambda e: self.label_canvas.configure(scrollregion=self.label_canvas.bbox("all")))
+
         for label in self.labels:
             color = self.label_colors[label]
-            label_button = tk.Radiobutton(control_frame_right, text=label, variable=self.current_label, value=label,
-                                          indicatoron=0, width=20, bg=color, font=("Helvetica", 8), command=lambda l=label: self.on_label_select(l))
-            label_button.pack(fill=tk.X, pady=2)
+            label_button = tk.Radiobutton(self.label_frame, text=label, variable=self.current_label, value=label,
+                                          indicatoron=0, width=15, bg=color, font=("Helvetica", 7),
+                                          command=lambda l=label: self.on_label_select(l))
+            label_button.pack(fill=tk.X, pady=1)
             self.label_buttons.append(label_button)
 
-        self.fig, self.axs = plt.subplots(3, 1, figsize=(10, 12))
+        self.fig, self.axs = plt.subplots(3, 1, figsize=(15, 15))  # Adjust figure size for better fit
         self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.tooltip = self.fig.text(0, 0, "", va="bottom", ha="left", fontsize=8,
+                                     bbox=dict(boxstyle="round,pad=0.3", fc="yellow", ec="black", lw=1))
+        self.tooltip.set_visible(False)
 
         self.canvas.mpl_connect("button_press_event", self.on_click)
         self.canvas.mpl_connect("motion_notify_event", self.on_drag)
@@ -853,9 +869,162 @@ class LabelFramesTool:
         self.canvas.mpl_connect("button_release_event", self.on_mouse_release)
         self.canvas.mpl_connect("motion_notify_event", self.on_mouse_move)
         self.canvas.mpl_connect("scroll_event", self.on_scroll)
+        self.canvas.mpl_connect("motion_notify_event", self.show_tooltip)
 
         self.display_frame()
 
+    def setup_labeling_ui(self):
+        self.main_tool.clear_root()
+
+        main_frame = tk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        control_frame = tk.Frame(main_frame)
+        control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+
+        settings_frame = tk.Frame(control_frame)
+        settings_frame.pack(side=tk.LEFT, padx=10)
+
+        tk.Label(settings_frame, text="Marker Size").pack(side=tk.LEFT, padx=5)
+        tk.Scale(settings_frame, from_=config.MIN_MARKER_SIZE, to=config.MAX_MARKER_SIZE, orient=tk.HORIZONTAL,
+                 resolution=config.MARKER_SIZE_STEP, variable=self.marker_size_var,
+                 command=self.update_marker_size).pack(side=tk.LEFT, padx=5)
+
+        tk.Label(settings_frame, text="Contrast").pack(side=tk.LEFT, padx=5)
+        tk.Scale(settings_frame, from_=config.MIN_CONTRAST, to=config.MAX_CONTRAST, orient=tk.HORIZONTAL,
+                 resolution=config.CONTRAST_STEP, variable=self.contrast_var,
+                 command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
+
+        tk.Label(settings_frame, text="Brightness").pack(side=tk.LEFT, padx=5)
+        tk.Scale(settings_frame, from_=config.MIN_BRIGHTNESS, to=config.MAX_BRIGHTNESS, orient=tk.HORIZONTAL,
+                 resolution=config.BRIGHTNESS_STEP, variable=self.brightness_var,
+                 command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
+
+        frame_control = tk.Frame(control_frame)
+        frame_control.pack(side=tk.LEFT, padx=20)
+
+        self.frame_label = tk.Label(frame_control,
+                                    text=f"Frame: {self.current_frame_index + 1}/{len(self.frames['side'])}")
+        self.frame_label.pack()
+
+        self.prev_button = tk.Button(frame_control, text="<<", command=lambda: self.skip_labeling_frames(-1))
+        self.prev_button.pack(side=tk.LEFT, padx=5)
+
+        self.next_button = tk.Button(frame_control, text=">>", command=lambda: self.skip_labeling_frames(1))
+        self.next_button.pack(side=tk.LEFT, padx=5)
+
+        button_frame = tk.Frame(control_frame)
+        button_frame.pack(side=tk.LEFT, padx=20)
+
+        home_button = tk.Button(button_frame, text="Home", command=self.reset_view)
+        home_button.pack(pady=5)
+
+        save_button = tk.Button(button_frame, text="Save Labels", command=self.save_labels)
+        save_button.pack(pady=5)
+
+        back_button = tk.Button(button_frame, text="Back to Main Menu", command=self.main_tool.main_menu)
+        back_button.pack(pady=5)
+
+        view_frame = tk.Frame(control_frame)
+        view_frame.pack(side=tk.RIGHT, padx=10, pady=5)
+        tk.Label(view_frame, text="Label View").pack()
+        self.current_view = tk.StringVar(value="side")
+        for view in ["side", "front", "overhead"]:
+            tk.Radiobutton(view_frame, text=view.capitalize(), variable=self.current_view, value=view).pack(side=tk.TOP,
+                                                                                                            pady=2)
+
+        projection_frame = tk.Frame(control_frame)
+        projection_frame.pack(side=tk.RIGHT, padx=10, pady=5)
+        tk.Label(projection_frame, text="Projection View").pack()
+        self.projection_view = tk.StringVar(value="side")
+        for view in ["side", "front", "overhead"]:
+            tk.Radiobutton(projection_frame, text=view.capitalize(), variable=self.projection_view, value=view).pack(
+                side=tk.TOP, pady=2)
+
+        control_frame_right = tk.Frame(main_frame)
+        control_frame_right.pack(side=tk.RIGHT, fill=tk.Y, padx=3, pady=1)  # Reduce padding to minimize space
+
+        self.labels = config.BODY_PART_LABELS
+        self.label_colors = self.generate_label_colors(self.labels)
+        self.current_label = tk.StringVar(value=self.labels[0])
+
+        self.body_part_points = {
+            frame_idx: {label: {"side": None, "front": None, "overhead": None} for label in self.labels} for
+            frame_idx in range(len(self.frames['side']))
+        }
+
+        self.label_canvas = tk.Canvas(control_frame_right, width=100)  # Set a fixed width for the label canvas
+        self.label_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)  # Do not expand to use only necessary space
+        self.label_scrollbar = tk.Scrollbar(control_frame_right, orient=tk.VERTICAL, command=self.label_canvas.yview)
+        self.label_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.label_canvas.configure(yscrollcommand=self.label_scrollbar.set)
+
+        self.label_frame = tk.Frame(self.label_canvas)
+        self.label_canvas.create_window((0, 0), window=self.label_frame, anchor="nw")
+        self.label_frame.bind("<Configure>",
+                              lambda e: self.label_canvas.configure(scrollregion=self.label_canvas.bbox("all")))
+
+        for label in self.labels:
+            color = self.label_colors[label]
+            label_button = tk.Radiobutton(self.label_frame, text=label, variable=self.current_label, value=label,
+                                          indicatoron=0, width=15, bg=color, font=("Helvetica", 7),
+                                          command=lambda l=label: self.on_label_select(l))
+            label_button.pack(fill=tk.X, pady=1)
+            self.label_buttons.append(label_button)
+
+        self.fig, self.axs = plt.subplots(3, 1, figsize=(10, 10))  # Adjust figure size for better fit
+        self.fig.subplots_adjust(left=0.005, right=0.995, top=0.99, bottom=0.01, wspace=0.01, hspace=0.005)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.tooltip = self.fig.text(0, 0, "", va="bottom", ha="left", fontsize=8,
+                                     bbox=dict(boxstyle="round,pad=0.3", fc="yellow", ec="black", lw=1), zorder=10)
+        self.tooltip.set_visible(False)
+
+        self.canvas.mpl_connect("button_press_event", self.on_click)
+        self.canvas.mpl_connect("motion_notify_event", self.on_drag)
+        self.canvas.mpl_connect("motion_notify_event", self.update_crosshair)
+        self.canvas.mpl_connect("button_press_event", self.on_mouse_press)
+        self.canvas.mpl_connect("button_release_event", self.on_mouse_release)
+        self.canvas.mpl_connect("motion_notify_event", self.on_mouse_move)
+        self.canvas.mpl_connect("scroll_event", self.on_scroll)
+        self.canvas.mpl_connect("motion_notify_event", self.show_tooltip)
+
+        self.display_frame()
+
+    def show_tooltip(self, event):
+        if event.inaxes in self.axs:
+            marker_size = self.marker_size_var.get() * 10  # Assuming marker size is scaled
+            for label, views in self.body_part_points[self.current_frame_index].items():
+                for view, coords in views.items():
+                    if view == self.current_view.get() and coords is not None:
+                        x, y = coords
+                        if np.hypot(x - event.xdata, y - event.ydata) < marker_size:
+                            widget = self.canvas.get_tk_widget()
+                            self.show_custom_tooltip(widget, label)
+                            return
+        self.hide_custom_tooltip()
+
+    def show_custom_tooltip(self, wdgt, text):
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+        self.tooltip_window = tk.Toplevel(wdgt)
+        self.tooltip_window.overrideredirect(True)
+
+        tk.Label(self.tooltip_window, text=text, background='yellow').pack()
+        self.tooltip_window.update_idletasks()
+
+        x_center = wdgt.winfo_pointerx() + 20
+        y_center = wdgt.winfo_pointery() + 20
+        self.tooltip_window.geometry(f"+{x_center}+{y_center}")
+
+        wdgt.bind('<Leave>', self.hide_custom_tooltip)
+
+    def hide_custom_tooltip(self, event=None):
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
 
     def get_p(self, view):
         if self.calibration_data:
@@ -945,15 +1114,24 @@ class LabelFramesTool:
             # Get the line equation
             line_at_t = self.get_line_equation(point_3d, camera_center)
 
-            # Get the 3D coordinates of the near edge, ie y=0
-            y = 0
-            t_near = self.find_t_for_coordinate(y, 1, point_3d, camera_center)
-            near_edge = line_at_t(t_near)
+            # Determine the appropriate dimension based on the view
+            if view == "side":
+                coord_index = 1  # y-coordinate for side view
+            elif view == "front":
+                coord_index = 0  # x-coordinate for front view
+            elif view == "overhead":
+                coord_index = 2  # z-coordinate for overhead view
+
+            # Get the 3D coordinates of the near edge
+            near_edge = line_at_t(self.find_t_for_coordinate(0, coord_index, point_3d, camera_center))
 
             # Get the 3D coordinates of the far edge
-            y = self.calibration_data['belt points WCS'].T[1].max()
-            t_far = self.find_t_for_coordinate(y, 1, point_3d, camera_center)
-            far_edge = line_at_t(t_far)
+            far_edge_value = self.calibration_data['belt points WCS'].T[coord_index].max()
+            if view == 'front':
+                far_edge_value += 140  # Add the length of the belt to the far edge
+            if view == 'overhead':
+                far_edge_value = 60 # Set the far edge to fixed height for overhead view
+            far_edge = line_at_t(self.find_t_for_coordinate(far_edge_value, coord_index, point_3d, camera_center))
 
             return near_edge, far_edge
 
@@ -999,7 +1177,7 @@ class LabelFramesTool:
                 frame = cv2.cvtColor(self.frames[view][self.current_frame_index], cv2.COLOR_BGR2RGB)
                 frame = self.apply_contrast_brightness(frame)
                 ax.imshow(frame)
-                ax.set_title(f'{view.capitalize()} View')
+                ax.set_title(f'{view.capitalize()} View', fontsize=8)
                 ax.axis('off')
 
                 if view in self.cam_reprojected_points['near'] and view in self.cam_reprojected_points['far']:
@@ -1029,22 +1207,30 @@ class LabelFramesTool:
             frame = cv2.cvtColor(self.frames[view][self.current_frame_index], cv2.COLOR_BGR2RGB)
             frame = self.apply_contrast_brightness(frame)
             ax.imshow(frame)
-            ax.set_title(f'{view.capitalize()} View')
+            ax.set_title(f'{view.capitalize()} View', fontsize=8)
             ax.axis('off')
 
         self.show_body_part_points()
         self.draw_reprojected_points()  # Call to update reprojected points
         self.canvas.draw()
 
-    def show_body_part_points(self):
+    def show_body_part_points(self, draw=True):
+        # Remove previous scatter plots
+        for ax in self.axs:
+            for collection in ax.collections:
+                collection.remove()
+
         current_points = self.body_part_points[self.current_frame_index]
         for label, views in current_points.items():
             for view, coords in views.items():
                 if coords is not None:
                     x, y = coords
                     ax = self.axs[["side", "front", "overhead"].index(view)]
-                    ax.scatter(x, y, c=self.label_colors[label], s=self.marker_size_var.get() * 10, label=label)
-        self.canvas.draw()
+                    ax.scatter(x, y, c=self.label_colors[label], s=self.marker_size_var.get() * 10, label=label,
+                               picker=True)
+
+        if draw:
+            self.canvas.draw_idle()
 
     def on_click(self, event):
         if event.inaxes not in self.axs:
@@ -1136,11 +1322,15 @@ class LabelFramesTool:
             messagebox.showerror("Error", f"Failed to load calibration data: {e}")
 
     def update_marker_size(self, val):
+        current_xlim = [ax.get_xlim() for ax in self.axs]
+        current_ylim = [ax.get_ylim() for ax in self.axs]
         self.marker_size = self.marker_size_var.get()
-        self.show_body_part_points()
+        self.display_frame()
+        for ax, xlim, ylim in zip(self.axs, current_xlim, current_ylim):
+            ax.set_xlim(xlim)
+            ax.set_ylim(ylim)
+        self.canvas.draw_idle()
 
-    # def update_contrast_brightness(self, val):
-    #     self.display_frame()
     def update_contrast_brightness(self, val):
         current_xlim = [ax.get_xlim() for ax in self.axs]
         current_ylim = [ax.get_ylim() for ax in self.axs]
@@ -1271,6 +1461,8 @@ class LabelFramesTool:
 
     def rgb_to_hex(self, color):
         return "#{:02x}{:02x}{:02x}".format(int(color[0] * 255), int(color[1] * 255), int(color[2] * 255))
+
+
 if __name__ == "__main__":
     root = tk.Tk()
     app = MainTool(root)
