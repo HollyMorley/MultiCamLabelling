@@ -10,10 +10,16 @@ from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.backend_bases import MouseButton
 from PIL import Image, ImageTk, ImageEnhance
+import h5py
 
 import Helpers.MultiCamLabelling_config as config
 from Helpers.CalibrateCams import BasicCalibration
 
+
+def get_video_name_with_view(video_name, view):
+    split_video_name = video_name.split('_')
+    split_video_name.insert(-1, view)
+    return '_'.join(split_video_name)
 
 class MainTool:
     def __init__(self, root):
@@ -83,7 +89,7 @@ class ExtractFramesTool:
             return
 
         self.video_name, self.video_date, self.camera_view = self.parse_video_path(self.video_path)
-        self.video_name = os.path.splitext(self.video_name)[0]  # Remove the .avi extension #todo check this works ok
+        self.video_name_stripped = '_'.join(self.video_name.split('_')[:-1])  # Remove the camera view part
         self.cap_side = cv2.VideoCapture(self.video_path)
         self.total_frames = int(self.cap_side.get(cv2.CAP_PROP_FRAME_COUNT))
         self.current_frame_index = 0
@@ -153,12 +159,14 @@ class ExtractFramesTool:
         ret_overhead, frame_overhead = self.cap_overhead.read()
 
         if ret_side and ret_front and ret_overhead:
-            side_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["side"].format(video_name=self.video_name),
+            video_names = {view: get_video_name_with_view(self.video_name, view) for view in ['side', 'front', 'overhead']}
+
+            side_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["side"].format(video_name=video_names['side']),
                                      f"img{frame_number}.png")
-            front_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["front"].format(video_name=self.video_name),
+            front_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["front"].format(video_name=video_names['front']),
                                       f"img{frame_number}.png")
-            overhead_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["overhead"].format(video_name=self.video_name),
-                                         f"img{frame_number}.png")
+            overhead_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["overhead"].format(video_name=video_names['overhead']),
+                f"img{frame_number}.png")
 
             os.makedirs(os.path.dirname(side_path), exist_ok=True)
             os.makedirs(os.path.dirname(front_path), exist_ok=True)
@@ -215,14 +223,14 @@ class ExtractFramesTool:
         date = parts[1]
         camera_view = [part for part in parts if part in ['side', 'front', 'overhead']][0]
         name_parts = [part for part in parts if part not in ['side', 'front', 'overhead']]
-        name = '_'.join(name_parts)
+        name = '_'.join(name_parts).replace('.avi', '')  # Remove .avi extension if present
         return name, date, camera_view
 
     def get_corresponding_video_path(self, view):
         base_path = os.path.dirname(self.video_path)
         video_file = os.path.basename(self.video_path)
-        corresponding_file = video_file.replace(self.camera_view, view)
-        return os.path.join(base_path, corresponding_file)
+        corresponding_file = video_file.replace(self.camera_view, view).replace('.avi', '')
+        return os.path.join(base_path, f"{corresponding_file}.avi")
 
 
 class CalibrateCamerasTool:
@@ -378,6 +386,16 @@ class CalibrateCamerasTool:
 
         self.show_frames()
 
+    def update_marker_size(self, val):
+        current_xlim = [ax.get_xlim() for ax in self.axs]
+        current_ylim = [ax.get_ylim() for ax in self.axs]
+        self.marker_size = self.marker_size_var.get()
+        self.show_frames()
+        for ax, xlim, ylim in zip(self.axs, current_xlim, current_ylim):
+            ax.set_xlim(xlim)
+            ax.set_ylim(ylim)
+        self.canvas.draw_idle()
+
     def load_calibration_points(self, file_path):
         try:
             df = pd.read_csv(file_path)
@@ -422,14 +440,14 @@ class CalibrateCamerasTool:
         date = parts[1]
         camera_view = [part for part in parts if part in ['side', 'front', 'overhead']][0]
         name_parts = [part for part in parts if part not in ['side', 'front', 'overhead']]
-        name = '_'.join(name_parts)
+        name = '_'.join(name_parts).replace('.avi', '')  # Remove .avi extension if present
         return name, date, camera_view
 
     def get_corresponding_video_path(self, view):
         base_path = os.path.dirname(self.video_path)
         video_file = os.path.basename(self.video_path)
-        corresponding_file = video_file.replace(self.camera_view, view)
-        return os.path.join(base_path, corresponding_file)
+        corresponding_file = video_file.replace(self.camera_view, view).replace('.avi', '')
+        return os.path.join(base_path, f"{corresponding_file}.avi")
 
     def save_calibration_points(self):
         calibration_path = config.CALIBRATION_SAVE_PATH_TEMPLATE.format(video_name=self.video_name)
@@ -477,22 +495,24 @@ class CalibrateCamerasTool:
         return cv2.cvtColor(np.array(img_brightness), cv2.COLOR_RGB2BGR)
 
     def on_scroll(self, event):
-        ax = self.axs[["side", "front", "overhead"].index(self.current_view.get())]
-        xlim = ax.get_xlim()
-        ylim = ax.get_ylim()
+        if event.inaxes:
+            ax = self.axs[["side", "front", "overhead"].index(self.current_view.get())]
+            xlim = ax.get_xlim()
+            ylim = ax.get_ylim()
 
-        xdata = event.xdata
-        ydata = event.ydata
+            xdata = event.xdata
+            ydata = event.ydata
 
-        zoom_factor = 0.9 if event.button == 'up' else 1.1
+            if xdata is not None and ydata is not None:
+                zoom_factor = 0.9 if event.button == 'up' else 1.1
 
-        new_xlim = [xdata + (x - xdata) * zoom_factor for x in xlim]
-        new_ylim = [ydata + (y - ydata) * zoom_factor for y in ylim]
+                new_xlim = [xdata + (x - xdata) * zoom_factor for x in xlim]
+                new_ylim = [ydata + (y - ydata) * zoom_factor for y in ylim]
 
-        ax.set_xlim(new_xlim)
-        ax.set_ylim(new_ylim)
+                ax.set_xlim(new_xlim)
+                ax.set_ylim(new_ylim)
 
-        self.canvas.draw_idle()
+                self.canvas.draw_idle()
 
     def on_mouse_press(self, event):
         if event.button == 2:
@@ -663,10 +683,12 @@ class LabelFramesTool:
         self.label_colors = self.generate_label_colors(self.labels)
         self.current_label = tk.StringVar(value=self.labels[0])
         self.current_view = tk.StringVar(value="side")
-        self.projection_view = tk.StringVar(value="side") # view to project points from
+        self.projection_view = tk.StringVar(value="side")  # view to project points from
         self.body_part_points = {}
+        self.calibration_points = {}
         self.cam_reprojected_points = {'near': {}, 'far': {}}
         self.frames = {'side': [], 'front': [], 'overhead': []}
+        self.frame_names = {'side': [], 'front': [], 'overhead': []}
         self.projection_lines = {'side': None, 'front': None, 'overhead': None}
         self.P = None
         self.tooltip = None
@@ -680,7 +702,6 @@ class LabelFramesTool:
 
         self.label_frames_menu()
 
-
     def label_frames_menu(self):
         self.main_tool.clear_root()
 
@@ -691,7 +712,6 @@ class LabelFramesTool:
             return
 
         self.video_name = os.path.basename(calibration_folder_path)
-        self.video_name = os.path.splitext(self.video_name)[0]  # Remove the .avi extension # todo check this works ok
         self.video_date = self.extract_date_from_folder_path(calibration_folder_path)
         self.calibration_file_path = os.path.join(calibration_folder_path, "calibration_labels.csv")
 
@@ -699,13 +719,18 @@ class LabelFramesTool:
             messagebox.showerror("Error", "No corresponding camera calibration data found.")
             return
 
+        base_path = os.path.dirname(os.path.dirname(calibration_folder_path))
+
+        video_names = {view: get_video_name_with_view(self.video_name, view) for view in ['side', 'front', 'overhead']}
+
         self.extracted_frames_path = {
-            'side': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Side/{self.video_name}",
-            'front': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Front/{self.video_name}",
-            'overhead': f"X:/hmorley/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Overhead/{self.video_name}"
+            'side': os.path.normpath(os.path.join(base_path, "Side", video_names['side'])),
+            'front': os.path.normpath(os.path.join(base_path, "Front", video_names['front'])),
+            'overhead': os.path.normpath(os.path.join(base_path, "Overhead", video_names['overhead']))
         }
 
         if not all(os.path.exists(path) for path in self.extracted_frames_path.values()):
+            missing_paths = [path for path in self.extracted_frames_path.values() if not os.path.exists(path)]
             messagebox.showerror("Error", "One or more corresponding extracted frames folders not found.")
             return
 
@@ -732,146 +757,55 @@ class LabelFramesTool:
         return None
 
     def load_frames(self):
-        for view in self.frames.keys():
-            frame_files = sorted(os.listdir(self.extracted_frames_path[view]),
-                                 key=lambda x: os.path.getctime(os.path.join(self.extracted_frames_path[view], x)))
-            self.frames[view] = [cv2.imread(os.path.join(self.extracted_frames_path[view], file)) for file in
-                                 frame_files]
+        valid_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tiff"}
 
-        min_frame_count = min(len(self.frames[view]) for view in self.frames)
+        for view in self.frames.keys():
+            frame_files = sorted(
+                (f for f in os.listdir(self.extracted_frames_path[view]) if
+                 os.path.splitext(f)[1].lower() in valid_extensions),
+                key=lambda x: os.path.getctime(os.path.join(self.extracted_frames_path[view], x))
+            )
+            for file in frame_files:
+                frame = cv2.imread(os.path.join(self.extracted_frames_path[view], file))
+                self.frames[view].append(frame)
+                self.frame_names[view].append(file)
+
+        min_frame_count = min(len(self.frames[view]) for view in self.frames if self.frames[view])
         for view in self.frames:
             self.frames[view] = self.frames[view][:min_frame_count]
 
+        for view in self.frames:
+            print(f"Number of frames loaded for {view}: {len(self.frames[view])}")
+
+        if min_frame_count == 0:
+            messagebox.showerror("Error", "No frames found in the directories.")
+            self.loading_popup.destroy()
+            return
+
         self.loading_popup.destroy()
 
-        self.load_calibration_data(self.calibration_file_path)
-        self.setup_labeling_ui()
-
+        # Initialize body_part_points for all frames
         self.body_part_points = {
             frame_idx: {label: {"side": None, "front": None, "overhead": None} for label in self.labels}
-            for frame_idx in range(len(self.frames['side']))
+            for frame_idx in range(min_frame_count)
         }
 
-    def setup_labeling_ui(self):
-        self.main_tool.clear_root()
+        self.setup_labeling_ui()
 
-        main_frame = tk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        video_names = {view: os.path.basename(self.extracted_frames_path[view]) for view in ['side', 'front', 'overhead']}
 
-        control_frame = tk.Frame(main_frame)
-        control_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
+        for view in ['side', 'front', 'overhead']:
+            label_file_path = os.path.join(config.LABEL_SAVE_PATH_TEMPLATE[view].format(video_name=video_names[view]),
+                                           "CollectedData_Holly.csv")
+            if os.path.exists(label_file_path):
+                self.load_existing_labels(label_file_path, view)
 
-        settings_frame = tk.Frame(control_frame)
-        settings_frame.pack(side=tk.LEFT, padx=10)
+        # Load calibration data and populate body_part_points with calibration labels
+        self.load_calibration_data(self.calibration_file_path)
 
-        tk.Label(settings_frame, text="Marker Size").pack(side=tk.LEFT, padx=5)
-        tk.Scale(settings_frame, from_=config.MIN_MARKER_SIZE, to=config.MAX_MARKER_SIZE, orient=tk.HORIZONTAL,
-                 resolution=config.MARKER_SIZE_STEP, variable=self.marker_size_var,
-                 command=self.update_marker_size).pack(side=tk.LEFT, padx=5)
-
-        tk.Label(settings_frame, text="Contrast").pack(side=tk.LEFT, padx=5)
-        tk.Scale(settings_frame, from_=config.MIN_CONTRAST, to=config.MAX_CONTRAST, orient=tk.HORIZONTAL,
-                 resolution=config.CONTRAST_STEP, variable=self.contrast_var,
-                 command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
-
-        tk.Label(settings_frame, text="Brightness").pack(side=tk.LEFT, padx=5)
-        tk.Scale(settings_frame, from_=config.MIN_BRIGHTNESS, to=config.MAX_BRIGHTNESS, orient=tk.HORIZONTAL,
-                 resolution=config.BRIGHTNESS_STEP, variable=self.brightness_var,
-                 command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
-
-        frame_control = tk.Frame(control_frame)
-        frame_control.pack(side=tk.LEFT, padx=20)
-
-        self.frame_label = tk.Label(frame_control,
-                                    text=f"Frame: {self.current_frame_index + 1}/{len(self.frames['side'])}")
-        self.frame_label.pack()
-
-        self.prev_button = tk.Button(frame_control, text="<<", command=lambda: self.skip_labeling_frames(-1))
-        self.prev_button.pack(side=tk.LEFT, padx=5)
-
-        self.next_button = tk.Button(frame_control, text=">>", command=lambda: self.skip_labeling_frames(1))
-        self.next_button.pack(side=tk.LEFT, padx=5)
-
-        button_frame = tk.Frame(control_frame)
-        button_frame.pack(side=tk.LEFT, padx=20)
-
-        home_button = tk.Button(button_frame, text="Home", command=self.reset_view)
-        home_button.pack(pady=5)
-
-        save_button = tk.Button(button_frame, text="Save Labels", command=self.save_labels)
-        save_button.pack(pady=5)
-
-        back_button = tk.Button(button_frame, text="Back to Main Menu", command=self.main_tool.main_menu)
-        back_button.pack(pady=5)
-
-        view_frame = tk.Frame(control_frame)
-        view_frame.pack(side=tk.RIGHT, padx=10, pady=5)
-        tk.Label(view_frame, text="Label View").pack()
-        self.current_view = tk.StringVar(value="side")
-        for view in ["side", "front", "overhead"]:
-            tk.Radiobutton(view_frame, text=view.capitalize(), variable=self.current_view, value=view).pack(side=tk.TOP,
-                                                                                                            pady=2)
-
-        projection_frame = tk.Frame(control_frame)
-        projection_frame.pack(side=tk.RIGHT, padx=10, pady=5)
-        tk.Label(projection_frame, text="Projection View").pack()
-        self.projection_view = tk.StringVar(value="side")
-        for view in ["side", "front", "overhead"]:
-            tk.Radiobutton(projection_frame, text=view.capitalize(), variable=self.projection_view, value=view).pack(
-                side=tk.TOP, pady=2)
-
-        control_frame_right = tk.Frame(main_frame)
-        # control_frame_right.pack(side=tk.RIGHT, fill=tk.Y)  # Use the remaining space
-        control_frame_right.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)  # Use the remaining space
-
-
-        self.labels = config.BODY_PART_LABELS
-        self.label_colors = self.generate_label_colors(self.labels)
-        self.current_label = tk.StringVar(value=self.labels[0])
-
-        self.body_part_points = {
-            frame_idx: {label: {"side": None, "front": None, "overhead": None} for label in self.labels} for
-            frame_idx in range(len(self.frames['side']))
-        }
-
-        self.label_canvas = tk.Canvas(control_frame_right, width=150)  # Set a fixed width for the label canvas
-        self.label_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)  # Do not expand to use only necessary space
-        self.label_scrollbar = tk.Scrollbar(control_frame_right, orient=tk.VERTICAL, command=self.label_canvas.yview)
-        self.label_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.label_canvas.configure(yscrollcommand=self.label_scrollbar.set)
-
-        self.label_frame = tk.Frame(self.label_canvas)
-        self.label_canvas.create_window((0, 0), window=self.label_frame, anchor="nw")
-        self.label_frame.bind("<Configure>",
-                              lambda e: self.label_canvas.configure(scrollregion=self.label_canvas.bbox("all")))
-
-        for label in self.labels:
-            color = self.label_colors[label]
-            label_button = tk.Radiobutton(self.label_frame, text=label, variable=self.current_label, value=label,
-                                          indicatoron=0, width=15, bg=color, font=("Helvetica", 7),
-                                          command=lambda l=label: self.on_label_select(l))
-            label_button.pack(fill=tk.X, pady=1)
-            self.label_buttons.append(label_button)
-
-        self.fig, self.axs = plt.subplots(3, 1, figsize=(15, 15))  # Adjust figure size for better fit
-        self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
-        self.tooltip = self.fig.text(0, 0, "", va="bottom", ha="left", fontsize=8,
-                                     bbox=dict(boxstyle="round,pad=0.3", fc="yellow", ec="black", lw=1))
-        self.tooltip.set_visible(False)
-
-        self.canvas.mpl_connect("button_press_event", self.on_click)
-        self.canvas.mpl_connect("motion_notify_event", self.on_drag)
-        self.canvas.mpl_connect("motion_notify_event", self.update_crosshair)
-        self.canvas.mpl_connect("button_press_event", self.on_mouse_press)
-        self.canvas.mpl_connect("button_release_event", self.on_mouse_release)
-        self.canvas.mpl_connect("motion_notify_event", self.on_mouse_move)
-        self.canvas.mpl_connect("scroll_event", self.on_scroll)
-        self.canvas.mpl_connect("motion_notify_event", self.show_tooltip)
 
         self.display_frame()
+
 
     def setup_labeling_ui(self):
         self.main_tool.clear_root()
@@ -948,10 +882,10 @@ class LabelFramesTool:
         self.label_colors = self.generate_label_colors(self.labels)
         self.current_label = tk.StringVar(value=self.labels[0])
 
-        self.body_part_points = {
-            frame_idx: {label: {"side": None, "front": None, "overhead": None} for label in self.labels} for
-            frame_idx in range(len(self.frames['side']))
-        }
+        # self.body_part_points = {
+        #     frame_idx: {label: {"side": None, "front": None, "overhead": None} for label in self.labels} for
+        #     frame_idx in range(len(self.frames['side']))
+        # }
 
         self.label_canvas = tk.Canvas(control_frame_right, width=100)  # Set a fixed width for the label canvas
         self.label_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)  # Do not expand to use only necessary space
@@ -992,6 +926,21 @@ class LabelFramesTool:
         self.canvas.mpl_connect("motion_notify_event", self.show_tooltip)
 
         self.display_frame()
+
+    def load_existing_labels(self, label_file_path, view):
+        # Replace filepath with h5 file
+        label_file_path = label_file_path.replace('.csv', '.h5')
+        df = pd.read_hdf(label_file_path, key='df')
+
+        for frame_idx_pos, frame_idx in enumerate(df.index):
+            for label in self.labels:
+                # Check if the required key exists in the DataFrame before accessing it
+                if ('Holly', label, 'x') in df.columns and ('Holly', label, 'y') in df.columns:
+                    x, y = df.loc[frame_idx, ('Holly', label, 'x')], df.loc[frame_idx, ('Holly', label, 'y')]
+                    if not np.isnan(x) and not np.isnan(y):
+                        self.body_part_points[frame_idx_pos][label][view] = (x, y)
+                else:
+                    print(f"Label '{label}' not found in the DataFrame for frame {frame_idx}.")
 
     def show_tooltip(self, event):
         if event.inaxes in self.axs:
@@ -1130,7 +1079,7 @@ class LabelFramesTool:
             if view == 'front':
                 far_edge_value += 140  # Add the length of the belt to the far edge
             if view == 'overhead':
-                far_edge_value = 60 # Set the far edge to fixed height for overhead view
+                far_edge_value = 60  # Set the far edge to fixed height for overhead view
             far_edge = line_at_t(self.find_t_for_coordinate(far_edge_value, coord_index, point_3d, camera_center))
 
             return near_edge, far_edge
@@ -1203,7 +1152,7 @@ class LabelFramesTool:
 
     def display_frame(self):
         for i, (ax, view) in enumerate(zip(self.axs, ['side', 'front', 'overhead'])):
-            ax.cla()  # Clear the axis before drawing
+            ax.cla()
             frame = cv2.cvtColor(self.frames[view][self.current_frame_index], cv2.COLOR_BGR2RGB)
             frame = self.apply_contrast_brightness(frame)
             ax.imshow(frame)
@@ -1211,11 +1160,10 @@ class LabelFramesTool:
             ax.axis('off')
 
         self.show_body_part_points()
-        self.draw_reprojected_points()  # Call to update reprojected points
+        self.draw_reprojected_points()
         self.canvas.draw()
 
     def show_body_part_points(self, draw=True):
-        # Remove previous scatter plots
         for ax in self.axs:
             for collection in ax.collections:
                 collection.remove()
@@ -1318,8 +1266,27 @@ class LabelFramesTool:
                 'belt points CCS': belt_points_CCS
             }
 
+            for frame_idx in range(len(self.frames['side'])):
+                for label in self.labels:
+                    if label in calibration_coordinates['bodyparts'].values:
+                        for view in ['side', 'front', 'overhead']:
+                            x_vals = calibration_coordinates[
+                                (calibration_coordinates['bodyparts'] == label) &
+                                (calibration_coordinates['coords'] == 'x')][view].values
+                            y_vals = calibration_coordinates[
+                                (calibration_coordinates['bodyparts'] == label) &
+                                (calibration_coordinates['coords'] == 'y')][view].values
+
+                            if len(x_vals) > 0 and len(y_vals) > 0:
+                                x = x_vals[0]
+                                y = y_vals[0]
+                                self.body_part_points[frame_idx][label][view] = (x, y)
+                            else:
+                                print(f"Missing data for {label} in {view} view at frame {frame_idx}")
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load calibration data: {e}")
+            print(f"Error loading calibration data: {e}")
 
     def update_marker_size(self, val):
         current_xlim = [ax.get_xlim() for ax in self.axs]
@@ -1351,22 +1318,24 @@ class LabelFramesTool:
         return cv2.cvtColor(np.array(img_brightness), cv2.COLOR_RGB2BGR)
 
     def on_scroll(self, event):
-        ax = self.axs[["side", "front", "overhead"].index(self.current_view.get())]
-        xlim = ax.get_xlim()
-        ylim = ax.get_ylim()
+        if event.inaxes:
+            ax = self.axs[["side", "front", "overhead"].index(self.current_view.get())]
+            xlim = ax.get_xlim()
+            ylim = ax.get_ylim()
 
-        xdata = event.xdata
-        ydata = event.ydata
+            xdata = event.xdata
+            ydata = event.ydata
 
-        zoom_factor = 0.9 if event.button == 'up' else 1.1
+            if xdata is not None and ydata is not None:
+                zoom_factor = 0.9 if event.button == 'up' else 1.1
 
-        new_xlim = [xdata + (x - xdata) * zoom_factor for x in xlim]
-        new_ylim = [ydata + (y - ydata) * zoom_factor for y in ylim]
+                new_xlim = [xdata + (x - xdata) * zoom_factor for x in xlim]
+                new_ylim = [ydata + (y - ydata) * zoom_factor for y in ylim]
 
-        ax.set_xlim(new_xlim)
-        ax.set_ylim(new_ylim)
+                ax.set_xlim(new_xlim)
+                ax.set_ylim(new_ylim)
 
-        self.canvas.draw_idle()
+                self.canvas.draw_idle()
 
     def on_mouse_press(self, event):
         if event.button == 2:
@@ -1427,32 +1396,119 @@ class LabelFramesTool:
         self.display_frame()
 
     def save_labels(self):
-        side_path = config.LABEL_SAVE_PATH_TEMPLATE['side'].format(video_name=self.video_name)
-        front_path = config.LABEL_SAVE_PATH_TEMPLATE['front'].format(video_name=self.video_name)
-        overhead_path = config.LABEL_SAVE_PATH_TEMPLATE['overhead'].format(video_name=self.video_name)
+        video_names = {view: os.path.basename(self.extracted_frames_path[view]) for view in ['side', 'front', 'overhead']}
+
+        side_path = os.path.join(
+            config.LABEL_SAVE_PATH_TEMPLATE['side'].format(video_name=video_names['side']),
+            "CollectedData_Holly.csv"
+        )
+        front_path = os.path.join(
+            config.LABEL_SAVE_PATH_TEMPLATE['front'].format(video_name=video_names['front']),
+            "CollectedData_Holly.csv"
+        )
+        overhead_path = os.path.join(
+            config.LABEL_SAVE_PATH_TEMPLATE['overhead'].format(video_name=video_names['overhead']),
+            "CollectedData_Holly.csv"
+        )
+
+        print(f"Saving labels to paths:\nSide: {side_path}\nFront: {front_path}\nOverhead: {overhead_path}")
 
         os.makedirs(os.path.dirname(side_path), exist_ok=True)
         os.makedirs(os.path.dirname(front_path), exist_ok=True)
         os.makedirs(os.path.dirname(overhead_path), exist_ok=True)
 
-        # Saving the body part coordinates
-        data = {"frame_index": [], "label": [], "view": [], "x": [], "y": []}
+        # Initialize data and filenames
+        data = []
+        frame_filenames = {"side": [], "front": [], "overhead": []}
+
+        # Gather data
         for frame_idx, labels in self.body_part_points.items():
             for label, views in labels.items():
                 for view, coords in views.items():
                     if coords is not None:
-                        data["frame_index"].append(frame_idx)
-                        data["label"].append(label)
-                        data["view"].append(view)
-                        data["x"].append(coords[0])
-                        data["y"].append(coords[1])
+                        x, y = coords
+                        filename = self.frame_names[view][frame_idx]
+                        video_filename = os.path.basename(self.extracted_frames_path[view])
+                        data.append((frame_idx, label, view, x, y, "Holly", video_filename, filename))
+                        frame_filenames[view].append(filename)
 
-        df = pd.DataFrame(data)
-        df.to_csv(side_path, index=False)
-        df.to_csv(front_path, index=False)
-        df.to_csv(overhead_path, index=False)
+        # Create DataFrame
+        df = pd.DataFrame(data, columns=["frame_index", "label", "view", "x", "y", "scorer", "video_filename", "frame_filename"])
 
+        # Define the ordered columns
+        ordered_cols = []
+        for view in ['side', 'front', 'overhead']:
+            for scorer in df['scorer'].unique():
+                for bodypart in config.BODY_PART_LABELS:
+                    ordered_cols.extend([(scorer, view, bodypart, coord) for coord in ['x', 'y']])
+
+        # make multi index where each frame image has a row with data_name, video_filename, frame_filename
+        idxs = []
+        for frame in df['frame_index'].unique():
+            # find video_filename and frame_filename for this frame
+            df_frame = df[df['frame_index'] == frame]
+            video_filename = df_frame['video_filename'].values[0]
+            frame_filename = df_frame['frame_filename'].values[0]
+            idxs.append(('labeled_data', video_filename, frame_filename))
+        Idxs = pd.MultiIndex.from_tuples(idxs)
+
+        # Create a MultiIndex with the desired order
+        ordered_cols_index = pd.MultiIndex.from_tuples(ordered_cols, names=['scorer', 'view', 'bodyparts', 'coords'])
+
+        # Create an empty DataFrame with the ordered_index
+        df_ordered = pd.DataFrame(index=Idxs, columns=ordered_cols_index)
+
+        # Populate the ordered DataFrame with existing data
+        for frame_idx, frame_name in enumerate(Idxs):
+            for label, views in self.body_part_points[frame_idx].items():
+                for view, coords in views.items():
+                    if coords is not None:
+                        x, y = coords
+                        df_ordered.loc[frame_name, ('Holly', view, label, 'x')] = x
+                        df_ordered.loc[frame_name, ('Holly', view, label, 'y')] = y
+
+        # Print the ordered DataFrame for debugging
+        print("df_ordered:")
+        print(df_ordered)
+
+        # Ensure data types are compatible with HDF5 storage
+        for col in df_ordered.columns:
+            df_ordered[col] = pd.to_numeric(df_ordered[col], errors='coerce')
+
+        # Save the DataFrames
+        for view in ['side', 'front', 'overhead']:
+            df_view = df_ordered.xs(view, level='view', axis=1, drop_level=True).copy()
+            save_path = {'side': side_path, 'front': front_path, 'overhead': overhead_path}[view]
+            df_view.to_csv(save_path)
+            df_view.to_hdf(save_path.replace(".csv", ".h5"), key='df', mode='w', format='fixed')
+
+        # # Consolidate the DataFrame to ensure it's not fragmented
+        # df_ordered = df_ordered.copy()
+        #
+        # # Separate DataFrames for side, front, and overhead
+        # dfs = {}
+        # for view in ['side', 'front', 'overhead']:
+        #     df_view = df_ordered.xs(view, level='view', axis=1, drop_level=True).copy()
+        #     dfs[view] = df_view
+        #
+        # # Save the DataFrames
+        # for view, df_view in dfs.items():
+        #     save_path = {'side': side_path, 'front': front_path, 'overhead': overhead_path}[view]
+        #     df_view.to_csv(save_path)
+        #     df_view.to_hdf(save_path.replace(".csv", ".h5"), key='df', mode='w')
+
+        print("Labels saved successfully")
         messagebox.showinfo("Info", "Labels saved successfully")
+
+    def parse_video_path(self, video_path):
+        video_file = os.path.basename(video_path)
+        parts = video_file.split('_')
+        date = parts[1]
+        camera_view = [part for part in parts if part in ['side', 'front', 'overhead']][0]
+        name_parts = [part for part in parts if part not in ['side', 'front', 'overhead']]
+        name = '_'.join(name_parts).replace('.avi', '')  # Remove the .avi extension if present
+        name_with_camera = f"{name}_{camera_view}"
+        return name_with_camera, date, camera_view
 
     def generate_label_colors(self, labels):
         colormap = plt.get_cmap('hsv')
