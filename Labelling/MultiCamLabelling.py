@@ -927,7 +927,7 @@ class LabelFramesTool:
         control_frame_right = tk.Frame(main_frame)
         control_frame_right.pack(side=tk.RIGHT, fill=tk.Y, padx=3, pady=1)  # Reduce padding to minimize space
 
-        self.labels = config.BODY_PART_LABELS + ['Door']  # Add 'Door' label here
+        self.labels = config.BODY_PART_LABELS #+ ['Door']  # Add 'Door' label here
         self.label_colors = self.generate_label_colors(self.labels)
         self.current_label = tk.StringVar(value=self.labels[0])
 
@@ -1323,20 +1323,22 @@ class LabelFramesTool:
             for frame_idx in range(len(self.frames['side'])):
                 for label in self.labels:
                     if label in calibration_coordinates['bodyparts'].values:
-                        for view in ['side', 'front', 'overhead']:
-                            x_vals = calibration_coordinates[
-                                (calibration_coordinates['bodyparts'] == label) &
-                                (calibration_coordinates['coords'] == 'x')][view].values
-                            y_vals = calibration_coordinates[
-                                (calibration_coordinates['bodyparts'] == label) &
-                                (calibration_coordinates['coords'] == 'y')][view].values
+                        # if label is not 'Door'
+                        if label != 'Door':
+                            for view in ['side', 'front', 'overhead']:
+                                x_vals = calibration_coordinates[
+                                    (calibration_coordinates['bodyparts'] == label) &
+                                    (calibration_coordinates['coords'] == 'x')][view].values
+                                y_vals = calibration_coordinates[
+                                    (calibration_coordinates['bodyparts'] == label) &
+                                    (calibration_coordinates['coords'] == 'y')][view].values
 
-                            if len(x_vals) > 0 and len(y_vals) > 0:
-                                x = x_vals[0]
-                                y = y_vals[0]
-                                self.body_part_points[frame_idx][label][view] = (x, y)
-                            else:
-                                print(f"Missing data for {label} in {view} view at frame {frame_idx}")
+                                if len(x_vals) > 0 and len(y_vals) > 0:
+                                    x = x_vals[0]
+                                    y = y_vals[0]
+                                    self.body_part_points[frame_idx][label][view] = (x, y)
+                                else:
+                                    print(f"Missing data for {label} in {view} view at frame {frame_idx}")
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load calibration data: {e}")
