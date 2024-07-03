@@ -12,7 +12,7 @@ class BasicCalibration:
 
     def estimate_cams_pose(self):
         cameras_extrinsics = self.cameras.compute_cameras_extrinsics(self.belt_coords_WCS, self.belt_coords_CCS)
-        self.print_reprojection_errors(cameras_extrinsics)
+        #self.print_reprojection_errors(cameras_extrinsics)
         return cameras_extrinsics
 
     def print_reprojection_errors(self, cameras_extrinsics, with_guess=False):
