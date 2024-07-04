@@ -1,7 +1,8 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 import cv2
 import os
+import bisect
 import pandas as pd
 import numpy as np
 import mpld3
@@ -12,6 +13,7 @@ from matplotlib.backend_bases import MouseButton
 from PIL import Image, ImageTk, ImageEnhance
 import h5py
 from scipy.optimize import minimize
+from tqdm import tqdm
 
 import Helpers.MultiCamLabelling_config as config
 from Helpers.CalibrateCams import BasicCalibration
@@ -105,13 +107,62 @@ class ExtractFramesTool:
 
         print(f"Total frames - Side: {total_frames_side}, Front: {total_frames_front}, Overhead: {total_frames_overhead}")
 
+        # Load timestamps
+        timestamps_side = self.zero_timestamps(self.load_timestamps('side'))
+        timestamps_front = self.zero_timestamps(self.load_timestamps('front'))
+        timestamps_overhead = self.zero_timestamps(self.load_timestamps('overhead'))
+
+        # Extract matching frames
+        self.match_frames(timestamps_side, timestamps_front, timestamps_overhead)
+
+        self.show_frames_extraction()
+
+    def load_timestamps(self, view):
+        video_name = '_'.join(self.video_name.split('_')[:-1])  # Remove the camera view part
+        video_number = self.video_name.split('_')[-1]
+        timestamp_file = video_name + f"_{view}_{video_number}_Timestamps.csv"
+        timestamp_path = os.path.join(os.path.dirname(self.video_path), timestamp_file)
+        timestamps = pd.read_csv(timestamp_path)
+        return timestamps
+
+    def zero_timestamps(self, timestamps):
+        timestamps['Timestamp'] = timestamps['Timestamp'] - timestamps['Timestamp'][0]
+        return timestamps
+
+    def match_frames(self, timestamps_side, timestamps_front, timestamps_overhead):
+        buffer_ns = int(4.06e+6)  # Ensure tolerance is an integer
+
+        # Ensure the timestamps are sorted
+        timestamps_side = timestamps_side.sort_values(by='Timestamp').reset_index(drop=True)
+        timestamps_front = timestamps_front.sort_values(by='Timestamp').reset_index(drop=True)
+        timestamps_overhead = timestamps_overhead.sort_values(by='Timestamp').reset_index(drop=True)
+
+        # Perform asof merge with tolerance
+        merged_front = pd.merge_asof(timestamps_side, timestamps_front, on='Timestamp', direction='nearest',
+                                     tolerance=buffer_ns, suffixes=('_side', '_front'))
+        merged_all = pd.merge_asof(merged_front, timestamps_overhead, on='Timestamp', direction='nearest',
+                                   tolerance=buffer_ns, suffixes=('_side', '_overhead'))
+
+        # Check column names
+        print(merged_all.columns)
+
+        # Explicitly handle NaNs
+        matched_frames = merged_all[['Frame_number_side', 'Frame_number_front', 'Frame_number_overhead']].applymap(
+            lambda x: int(x) if pd.notnull(x) else -1).values.tolist()
+
+        self.matched_frames = matched_frames
+        print(f"Matched frames: {len(matched_frames)}")
+
+    def show_frames_extraction(self):
+        self.main_tool.clear_root()
+
         control_frame = tk.Frame(self.root)
         control_frame.pack(side=tk.TOP, pady=10)
 
         self.frame_label = tk.Label(control_frame, text="Frame: 0")
         self.frame_label.pack(side=tk.LEFT, padx=5)
 
-        self.slider = tk.Scale(control_frame, from_=0, to=self.total_frames - 1, orient=tk.HORIZONTAL, length=600,
+        self.slider = tk.Scale(control_frame, from_=0, to=len(self.matched_frames) - 1, orient=tk.HORIZONTAL, length=600,
                                command=self.update_frame_label)
         self.slider.pack(side=tk.LEFT, padx=5)
 
@@ -125,12 +176,6 @@ class ExtractFramesTool:
         extract_button = tk.Button(control_frame_right, text="Extract Frames", command=self.save_extracted_frames)
         extract_button.pack(pady=5)
 
-        extract_10_next_button = tk.Button(control_frame_right, text="Extract 10 Next", command=lambda: self.extract_frames_in_range(1))
-        extract_10_next_button.pack(pady=5)
-
-        extract_10_prev_button = tk.Button(control_frame_right, text="Extract 10 Prev", command=lambda: self.extract_frames_in_range(-1))
-        extract_10_prev_button.pack(pady=5)
-
         back_button = tk.Button(control_frame_right, text="Back to Main Menu", command=self.main_tool.main_menu)
         back_button.pack(pady=5)
 
@@ -139,11 +184,10 @@ class ExtractFramesTool:
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.show_frames_extraction()
+        self.display_frame(0)
 
     def update_frame_label(self, val):
-        self.current_frame_index = int(val)
-        self.show_frames_extraction()
+        self.display_frame(int(val))
 
     def add_skip_buttons(self, parent):
         buttons = [
@@ -156,121 +200,35 @@ class ExtractFramesTool:
 
     def skip_frames(self, step):
         new_frame_number = self.current_frame_index + step
-        new_frame_number = max(0, min(new_frame_number, self.total_frames - 1))
-        self.current_frame_index = new_frame_number
+        new_frame_number = max(0, min(new_frame_number, len(self.matched_frames) - 1))
         self.slider.set(new_frame_number)
-        self.show_frames_extraction()
+        self.display_frame(new_frame_number)
 
-    def extract_frames_in_range(self, direction):
-        frames_to_extract = []
-        start_frame = self.current_frame_index + (direction * 300)
-        end_frame = self.current_frame_index
+    def display_frame(self, index):
+        self.current_frame_index = index
+        frame_side, frame_front, frame_overhead = self.matched_frames[index]
 
-        if direction == 1:
-            start_frame = self.current_frame_index
-            end_frame = self.current_frame_index + (direction * 300)
+        self.cap_side.set(cv2.CAP_PROP_POS_FRAMES, frame_side)
+        ret_side, frame_side_img = self.cap_side.read()
 
-        for i in range(start_frame, end_frame, 30):
-            if 0 <= i < self.total_frames:
-                frames_to_extract.append(i)
+        self.cap_front.set(cv2.CAP_PROP_POS_FRAMES, frame_front)
+        ret_front, frame_front_img = self.cap_front.read()
 
-        for frame_number in frames_to_extract:
-            # Ensure all cameras start at the same frame number
-            self.cap_side.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-            self.cap_front.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-            self.cap_overhead.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-
-            # Flush the buffer by reading a few frames if necessary
-            for _ in range(5):
-                self.cap_side.read()
-                self.cap_front.read()
-                self.cap_overhead.read()
-
-            self.cap_side.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-            self.cap_front.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-            self.cap_overhead.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-
-            ret_side, frame_side = self.cap_side.read()
-            ret_front, frame_front = self.cap_front.read()
-            ret_overhead, frame_overhead = self.cap_overhead.read()
-
-            # Print frame information for debugging
-            print(f"Frame number: {frame_number}, Side: {ret_side}, Front: {ret_front}, Overhead: {ret_overhead}")
-
-            if ret_side and ret_front and ret_overhead:
-                video_names = {view: get_video_name_with_view(self.video_name, view) for view in
-                               ['side', 'front', 'overhead']}
-
-                side_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["side"].format(video_name=video_names['side']),
-                                         f"img{frame_number}.png")
-                front_path = os.path.join(
-                    config.FRAME_SAVE_PATH_TEMPLATE["front"].format(video_name=video_names['front']),
-                    f"img{frame_number}.png")
-                overhead_path = os.path.join(
-                    config.FRAME_SAVE_PATH_TEMPLATE["overhead"].format(video_name=video_names['overhead']),
-                    f"img{frame_number}.png")
-
-                os.makedirs(os.path.dirname(side_path), exist_ok=True)
-                os.makedirs(os.path.dirname(front_path), exist_ok=True)
-                os.makedirs(os.path.dirname(overhead_path), exist_ok=True)
-
-                cv2.imwrite(side_path, frame_side)
-                cv2.imwrite(front_path, frame_front)
-                cv2.imwrite(overhead_path, frame_overhead)
-
-    def save_extracted_frames(self):
-        frame_number = self.current_frame_index
-        self.cap_side.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-        ret_side, frame_side = self.cap_side.read()
-
-        self.cap_front.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-        ret_front, frame_front = self.cap_front.read()
-
-        self.cap_overhead.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-        ret_overhead, frame_overhead = self.cap_overhead.read()
+        self.cap_overhead.set(cv2.CAP_PROP_POS_FRAMES, frame_overhead)
+        ret_overhead, frame_overhead_img = self.cap_overhead.read()
 
         if ret_side and ret_front and ret_overhead:
-            video_names = {view: get_video_name_with_view(self.video_name, view) for view in ['side', 'front', 'overhead']}
-
-            side_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["side"].format(video_name=video_names['side']),
-                                     f"img{frame_number}.png")
-            front_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["front"].format(video_name=video_names['front']),
-                                      f"img{frame_number}.png")
-            overhead_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["overhead"].format(video_name=video_names['overhead']),
-                f"img{frame_number}.png")
-
-            os.makedirs(os.path.dirname(side_path), exist_ok=True)
-            os.makedirs(os.path.dirname(front_path), exist_ok=True)
-            os.makedirs(os.path.dirname(overhead_path), exist_ok=True)
-
-            cv2.imwrite(side_path, frame_side)
-            cv2.imwrite(front_path, frame_front)
-            cv2.imwrite(overhead_path, frame_overhead)
-
-    def show_frames_extraction(self, val=None):
-        frame_number = self.current_frame_index
-
-        self.cap_side.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-        ret_side, frame_side = self.cap_side.read()
-
-        self.cap_front.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-        ret_front, frame_front = self.cap_front.read()
-
-        self.cap_overhead.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-        ret_overhead, frame_overhead = self.cap_overhead.read()
-
-        if ret_side and ret_front and ret_overhead:
-            frame_side = self.apply_contrast_brightness(frame_side)
-            frame_front = self.apply_contrast_brightness(frame_front)
-            frame_overhead = self.apply_contrast_brightness(frame_overhead)
+            frame_side_img = self.apply_contrast_brightness(frame_side_img)
+            frame_front_img = self.apply_contrast_brightness(frame_front_img)
+            frame_overhead_img = self.apply_contrast_brightness(frame_overhead_img)
 
             self.axs[0].cla()
             self.axs[1].cla()
             self.axs[2].cla()
 
-            self.axs[0].imshow(cv2.cvtColor(frame_side, cv2.COLOR_BGR2RGB))
-            self.axs[1].imshow(cv2.cvtColor(frame_front, cv2.COLOR_BGR2RGB))
-            self.axs[2].imshow(cv2.cvtColor(frame_overhead, cv2.COLOR_BGR2RGB))
+            self.axs[0].imshow(cv2.cvtColor(frame_side_img, cv2.COLOR_BGR2RGB))
+            self.axs[1].imshow(cv2.cvtColor(frame_front_img, cv2.COLOR_BGR2RGB))
+            self.axs[2].imshow(cv2.cvtColor(frame_overhead_img, cv2.COLOR_BGR2RGB))
 
             self.axs[0].set_title('Side View')
             self.axs[1].set_title('Front View')
@@ -302,6 +260,36 @@ class ExtractFramesTool:
         video_file = os.path.basename(self.video_path)
         corresponding_file = video_file.replace(self.camera_view, view).replace('.avi', '')
         return os.path.join(base_path, f"{corresponding_file}.avi")
+
+    def save_extracted_frames(self):
+        frame_side, frame_front, frame_overhead = self.matched_frames[self.current_frame_index]
+
+        self.cap_side.set(cv2.CAP_PROP_POS_FRAMES, frame_side)
+        ret_side, frame_side_img = self.cap_side.read()
+
+        self.cap_front.set(cv2.CAP_PROP_POS_FRAMES, frame_front)
+        ret_front, frame_front_img = self.cap_front.read()
+
+        self.cap_overhead.set(cv2.CAP_PROP_POS_FRAMES, frame_overhead)
+        ret_overhead, frame_overhead_img = self.cap_overhead.read()
+
+        if ret_side and ret_front and ret_overhead:
+            video_names = {view: get_video_name_with_view(self.video_name, view) for view in ['side', 'front', 'overhead']}
+
+            side_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["side"].format(video_name=video_names['side']),
+                                     f"img{frame_side}.png")
+            front_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["front"].format(video_name=video_names['front']),
+                                      f"img{frame_front}.png")
+            overhead_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["overhead"].format(video_name=video_names['overhead']),
+                f"img{frame_overhead}.png")
+
+            os.makedirs(os.path.dirname(side_path), exist_ok=True)
+            os.makedirs(os.path.dirname(front_path), exist_ok=True)
+            os.makedirs(os.path.dirname(overhead_path), exist_ok=True)
+
+            cv2.imwrite(side_path, frame_side_img)
+            cv2.imwrite(front_path, frame_front_img)
+            cv2.imwrite(overhead_path, frame_overhead_img)
 
 
 class CalibrateCamerasTool:
