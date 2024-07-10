@@ -13,6 +13,7 @@ from matplotlib.backend_bases import MouseButton
 from PIL import Image, ImageTk, ImageEnhance
 import h5py
 from scipy.optimize import minimize
+from sklearn.linear_model import LinearRegression
 from tqdm import tqdm
 
 import Helpers.MultiCamLabelling_config as config
@@ -112,8 +113,13 @@ class ExtractFramesTool:
         timestamps_front = self.zero_timestamps(self.load_timestamps('front'))
         timestamps_overhead = self.zero_timestamps(self.load_timestamps('overhead'))
 
+        # Adjust timestamps to offset the drift in front and overhead cameras (where frame rates are different)
+        timestamps_front_adj = self.adjust_timestamps(timestamps_side, timestamps_front)
+        timestamps_overhead_adj = self.adjust_timestamps(timestamps_side, timestamps_overhead)
+        timestamps_side_adj = timestamps_side['Timestamp'].astype(float) # adjust so compatible with scaled front and overhead
+
         # Extract matching frames
-        self.match_frames(timestamps_side, timestamps_front, timestamps_overhead)
+        self.match_frames(timestamps_side_adj, timestamps_front_adj, timestamps_overhead_adj)
 
         self.show_frames_extraction()
 
@@ -129,29 +135,53 @@ class ExtractFramesTool:
         timestamps['Timestamp'] = timestamps['Timestamp'] - timestamps['Timestamp'][0]
         return timestamps
 
+    def adjust_timestamps(self, side_timestamps, other_timestamps):
+        mask = other_timestamps['Timestamp'].diff() < 4.045e+6
+        other_timestamps_single_frame = other_timestamps[mask]
+        side_timestamps_single_frame = side_timestamps[mask]
+        diff = other_timestamps_single_frame['Timestamp'] - side_timestamps_single_frame['Timestamp']
+
+        # find the best fit line for the lower half of the data by straightning the line
+        model = LinearRegression().fit(side_timestamps_single_frame['Timestamp'].values.reshape(-1, 1), diff.values)
+        slope = model.coef_[0]
+        intercept = model.intercept_
+        straightened_diff = diff - (slope * side_timestamps_single_frame['Timestamp'] + intercept)
+        correct_diff_idx = np.where(straightened_diff < straightened_diff.mean())
+
+        model_true = LinearRegression().fit(side_timestamps_single_frame['Timestamp'].values[correct_diff_idx].reshape(-1, 1), diff.values[correct_diff_idx])
+        slope_true = model_true.coef_[0]
+        intercept_true = model_true.intercept_
+        adjusted_timestamps = other_timestamps['Timestamp'] - (slope_true * other_timestamps['Timestamp'] + intercept_true)
+        return adjusted_timestamps
+
     def match_frames(self, timestamps_side, timestamps_front, timestamps_overhead):
-        buffer_ns = int(4.06e+6)  # Ensure tolerance is an integer
+        buffer_ns = int(4.04e+6)  # Frame duration in nanoseconds
 
         # Ensure the timestamps are sorted
-        timestamps_side = timestamps_side.sort_values(by='Timestamp').reset_index(drop=True)
-        timestamps_front = timestamps_front.sort_values(by='Timestamp').reset_index(drop=True)
-        timestamps_overhead = timestamps_overhead.sort_values(by='Timestamp').reset_index(drop=True)
+        timestamps_side = timestamps_side.sort_values().reset_index(drop=True)
+        timestamps_front = timestamps_front.sort_values().reset_index(drop=True)
+        timestamps_overhead = timestamps_overhead.sort_values().reset_index(drop=True)
 
-        # Perform asof merge with tolerance
-        merged_front = pd.merge_asof(timestamps_side, timestamps_front, on='Timestamp', direction='nearest',
-                                     tolerance=buffer_ns, suffixes=('_side', '_front'))
-        merged_all = pd.merge_asof(merged_front, timestamps_overhead, on='Timestamp', direction='nearest',
-                                   tolerance=buffer_ns, suffixes=('_side', '_overhead'))
+        # Convert timestamps to DataFrame for merging
+        side_df = pd.DataFrame({'Timestamp': timestamps_side, 'Frame_number_side': range(len(timestamps_side))})
+        front_df = pd.DataFrame({'Timestamp': timestamps_front, 'Frame_number_front': range(len(timestamps_front))})
+        overhead_df = pd.DataFrame(
+            {'Timestamp': timestamps_overhead, 'Frame_number_overhead': range(len(timestamps_overhead))})
+
+        # Perform asof merge to find the closest matching frames within the buffer
+        matched_front = pd.merge_asof(side_df, front_df, on='Timestamp', direction='nearest', tolerance=buffer_ns,
+                                      suffixes=('_side', '_front'))
+        matched_all = pd.merge_asof(matched_front, overhead_df, on='Timestamp', direction='nearest',
+                                    tolerance=buffer_ns, suffixes=('_side', '_overhead'))
 
         # Check column names
-        print(merged_all.columns)
+        print(matched_all.columns)
 
-        # Explicitly handle NaNs
-        matched_frames = merged_all[['Frame_number_side', 'Frame_number_front', 'Frame_number_overhead']].applymap(
+        # Handle NaNs explicitly by setting unmatched frames to -1
+        matched_frames = matched_all[['Frame_number_side', 'Frame_number_front', 'Frame_number_overhead']].applymap(
             lambda x: int(x) if pd.notnull(x) else -1).values.tolist()
 
         self.matched_frames = matched_frames
-        print(f"Matched frames: {len(matched_frames)}")
 
     def show_frames_extraction(self):
         self.main_tool.clear_root()
@@ -159,12 +189,13 @@ class ExtractFramesTool:
         control_frame = tk.Frame(self.root)
         control_frame.pack(side=tk.TOP, pady=10)
 
-        self.frame_label = tk.Label(control_frame, text="Frame: 0")
-        self.frame_label.pack(side=tk.LEFT, padx=5)
-
-        self.slider = tk.Scale(control_frame, from_=0, to=len(self.matched_frames) - 1, orient=tk.HORIZONTAL, length=600,
+        self.slider = tk.Scale(control_frame, from_=0, to=len(self.matched_frames) - 1, orient=tk.HORIZONTAL,
+                               length=600,
                                command=self.update_frame_label)
         self.slider.pack(side=tk.LEFT, padx=5)
+
+        self.frame_label = tk.Label(control_frame, text=f"Frame: {self.matched_frames[0][0]}")
+        self.frame_label.pack(side=tk.LEFT, padx=5)
 
         skip_frame = tk.Frame(self.root)
         skip_frame.pack(side=tk.TOP, pady=10)
@@ -186,9 +217,6 @@ class ExtractFramesTool:
 
         self.display_frame(0)
 
-    def update_frame_label(self, val):
-        self.display_frame(int(val))
-
     def add_skip_buttons(self, parent):
         buttons = [
             ("<< 1000", -1000), ("<< 100", -100), ("<< 10", -10), ("<< 1", -1),
@@ -208,6 +236,7 @@ class ExtractFramesTool:
         self.current_frame_index = index
         frame_side, frame_front, frame_overhead = self.matched_frames[index]
 
+        # Read frames from respective positions
         self.cap_side.set(cv2.CAP_PROP_POS_FRAMES, frame_side)
         ret_side, frame_side_img = self.cap_side.read()
 
@@ -235,6 +264,11 @@ class ExtractFramesTool:
             self.axs[2].set_title('Overhead View')
 
             self.canvas.draw()
+
+    def update_frame_label(self, val):
+        index = int(val)
+        self.frame_label.config(text=f"Frame: {self.matched_frames[index][0]}")
+        self.display_frame(index)
 
     def apply_contrast_brightness(self, frame):
         contrast = self.contrast_var.get()
@@ -274,13 +308,15 @@ class ExtractFramesTool:
         ret_overhead, frame_overhead_img = self.cap_overhead.read()
 
         if ret_side and ret_front and ret_overhead:
-            video_names = {view: get_video_name_with_view(self.video_name, view) for view in ['side', 'front', 'overhead']}
+            video_names = {view: get_video_name_with_view(self.video_name, view) for view in
+                           ['side', 'front', 'overhead']}
 
             side_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["side"].format(video_name=video_names['side']),
                                      f"img{frame_side}.png")
             front_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["front"].format(video_name=video_names['front']),
                                       f"img{frame_front}.png")
-            overhead_path = os.path.join(config.FRAME_SAVE_PATH_TEMPLATE["overhead"].format(video_name=video_names['overhead']),
+            overhead_path = os.path.join(
+                config.FRAME_SAVE_PATH_TEMPLATE["overhead"].format(video_name=video_names['overhead']),
                 f"img{frame_overhead}.png")
 
             os.makedirs(os.path.dirname(side_path), exist_ok=True)
@@ -290,6 +326,7 @@ class ExtractFramesTool:
             cv2.imwrite(side_path, frame_side_img)
             cv2.imwrite(front_path, frame_front_img)
             cv2.imwrite(overhead_path, frame_overhead_img)
+            messagebox.showinfo("Info", "Frames saved successfully")
 
 
 class CalibrateCamerasTool:
@@ -309,6 +346,7 @@ class CalibrateCamerasTool:
         self.brightness_var = tk.DoubleVar(value=config.DEFAULT_BRIGHTNESS)
         self.marker_size_var = tk.DoubleVar(value=config.DEFAULT_MARKER_SIZE)
         self.mode = 'calibration'
+        self.matched_frames = []
 
         self.calibration_points_static = {}
         self.dragging_point = None
@@ -339,6 +377,20 @@ class CalibrateCamerasTool:
         self.cap_front = cv2.VideoCapture(self.get_corresponding_video_path('front'))
         self.cap_overhead = cv2.VideoCapture(self.get_corresponding_video_path('overhead'))
 
+        # Load timestamps
+        timestamps_side = self.zero_timestamps(self.load_timestamps('side'))
+        timestamps_front = self.zero_timestamps(self.load_timestamps('front'))
+        timestamps_overhead = self.zero_timestamps(self.load_timestamps('overhead'))
+
+        # Adjust timestamps to offset the drift in front and overhead cameras (where frame rates are different)
+        timestamps_front_adj = self.adjust_timestamps(timestamps_side, timestamps_front)
+        timestamps_overhead_adj = self.adjust_timestamps(timestamps_side, timestamps_overhead)
+        timestamps_side_adj = timestamps_side['Timestamp'].astype(
+            float)  # adjust so compatible with scaled front and overhead
+
+        # Extract matching frames
+        self.match_frames(timestamps_side_adj, timestamps_front_adj, timestamps_overhead_adj)
+
         self.calibration_file_path = config.CALIBRATION_SAVE_PATH_TEMPLATE.format(video_name=self.video_name)
         default_calibration_file = config.DEFAULT_CALIBRATION_FILE_PATH
 
@@ -355,15 +407,18 @@ class CalibrateCamerasTool:
 
         tk.Label(settings_frame, text="Marker Size").pack(side=tk.LEFT, padx=5)
         tk.Scale(settings_frame, from_=config.MIN_MARKER_SIZE, to=config.MAX_MARKER_SIZE, orient=tk.HORIZONTAL,
-                 resolution=config.MARKER_SIZE_STEP, variable=self.marker_size_var, command=self.update_marker_size).pack(side=tk.LEFT, padx=5)
+                 resolution=config.MARKER_SIZE_STEP, variable=self.marker_size_var,
+                 command=self.update_marker_size).pack(side=tk.LEFT, padx=5)
 
         tk.Label(settings_frame, text="Contrast").pack(side=tk.LEFT, padx=5)
         tk.Scale(settings_frame, from_=config.MIN_CONTRAST, to=config.MAX_CONTRAST, orient=tk.HORIZONTAL,
-                 resolution=config.CONTRAST_STEP, variable=self.contrast_var, command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
+                 resolution=config.CONTRAST_STEP, variable=self.contrast_var,
+                 command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
 
         tk.Label(settings_frame, text="Brightness").pack(side=tk.LEFT, padx=5)
         tk.Scale(settings_frame, from_=config.MIN_BRIGHTNESS, to=config.MAX_BRIGHTNESS, orient=tk.HORIZONTAL,
-                 resolution=config.BRIGHTNESS_STEP, variable=self.brightness_var, command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
+                 resolution=config.BRIGHTNESS_STEP, variable=self.brightness_var,
+                 command=self.update_contrast_brightness).pack(side=tk.LEFT, padx=5)
 
         frame_control = tk.Frame(control_frame)
         frame_control.pack(side=tk.LEFT, padx=20)
@@ -371,7 +426,8 @@ class CalibrateCamerasTool:
         self.frame_label = tk.Label(frame_control, text="Frame: 0")
         self.frame_label.pack()
 
-        self.slider = tk.Scale(frame_control, from_=0, to=self.total_frames - 1, orient=tk.HORIZONTAL, length=400,
+        self.slider = tk.Scale(frame_control, from_=0, to=len(self.matched_frames) - 1, orient=tk.HORIZONTAL,
+                               length=400,
                                command=self.update_frame_label)
         self.slider.pack()
 
@@ -405,7 +461,8 @@ class CalibrateCamerasTool:
             label_button.pack(side=tk.LEFT)
 
         for view in ["side", "front", "overhead"]:
-            tk.Radiobutton(control_frame_right, text=view.capitalize(), variable=self.current_view, value=view).pack(pady=2)
+            tk.Radiobutton(control_frame_right, text=view.capitalize(), variable=self.current_view, value=view).pack(
+                pady=2)
 
         self.fig, self.axs = plt.subplots(3, 1, figsize=(10, 12))
         self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
@@ -420,8 +477,8 @@ class CalibrateCamerasTool:
         self.canvas.mpl_connect("motion_notify_event", self.on_mouse_move)
         self.canvas.mpl_connect("scroll_event", self.on_scroll)
 
-
-        self.calibration_points_static = {label: {"side": None, "front": None, "overhead": None} for label in self.labels}
+        self.calibration_points_static = {label: {"side": None, "front": None, "overhead": None} for label in
+                                          self.labels}
 
         if os.path.exists(self.calibration_file_path):
             response = messagebox.askyesnocancel("Calibration Found",
@@ -444,6 +501,70 @@ class CalibrateCamerasTool:
                 messagebox.showinfo("Default Calibration Not Found", "Default calibration file not found.")
 
         self.show_frames()
+
+    def match_frames(self, timestamps_side, timestamps_front, timestamps_overhead):
+        buffer_ns = int(4.04e+6)  # Frame duration in nanoseconds
+
+        # Ensure the timestamps are sorted
+        timestamps_side = timestamps_side.sort_values().reset_index(drop=True)
+        timestamps_front = timestamps_front.sort_values().reset_index(drop=True)
+        timestamps_overhead = timestamps_overhead.sort_values().reset_index(drop=True)
+
+        # Convert timestamps to DataFrame for merging
+        side_df = pd.DataFrame({'Timestamp': timestamps_side, 'Frame_number_side': range(len(timestamps_side))})
+        front_df = pd.DataFrame({'Timestamp': timestamps_front, 'Frame_number_front': range(len(timestamps_front))})
+        overhead_df = pd.DataFrame(
+            {'Timestamp': timestamps_overhead, 'Frame_number_overhead': range(len(timestamps_overhead))})
+
+        # Perform asof merge to find the closest matching frames within the buffer
+        matched_front = pd.merge_asof(side_df, front_df, on='Timestamp', direction='nearest', tolerance=buffer_ns,
+                                      suffixes=('_side', '_front'))
+        matched_all = pd.merge_asof(matched_front, overhead_df, on='Timestamp', direction='nearest',
+                                    tolerance=buffer_ns, suffixes=('_side', '_overhead'))
+
+        # Check column names
+        print(matched_all.columns)
+
+        # Handle NaNs explicitly by setting unmatched frames to -1
+        matched_frames = matched_all[['Frame_number_side', 'Frame_number_front', 'Frame_number_overhead']].applymap(
+            lambda x: int(x) if pd.notnull(x) else -1).values.tolist()
+
+        self.matched_frames = matched_frames
+        print(f"Matched frames: {len(matched_frames)}")
+
+    def load_timestamps(self, view):
+        video_name = '_'.join(self.video_name.split('_')[:-1])  # Remove the camera view part
+        video_number = self.video_name.split('_')[-1]
+        timestamp_file = video_name + f"_{view}_{video_number}_Timestamps.csv"
+        timestamp_path = os.path.join(os.path.dirname(self.video_path), timestamp_file)
+        timestamps = pd.read_csv(timestamp_path)
+        return timestamps
+
+    def zero_timestamps(self, timestamps):
+        timestamps['Timestamp'] = timestamps['Timestamp'] - timestamps['Timestamp'][0]
+        return timestamps
+
+    def adjust_timestamps(self, side_timestamps, other_timestamps):
+        mask = other_timestamps['Timestamp'].diff() < 4.045e+6
+        other_timestamps_single_frame = other_timestamps[mask]
+        side_timestamps_single_frame = side_timestamps[mask]
+        diff = other_timestamps_single_frame['Timestamp'] - side_timestamps_single_frame['Timestamp']
+
+        # find the best fit line for the lower half of the data by straightening the line
+        model = LinearRegression().fit(side_timestamps_single_frame['Timestamp'].values.reshape(-1, 1), diff.values)
+        slope = model.coef_[0]
+        intercept = model.intercept_
+        straightened_diff = diff - (slope * side_timestamps_single_frame['Timestamp'] + intercept)
+        correct_diff_idx = np.where(straightened_diff < straightened_diff.mean())
+
+        model_true = LinearRegression().fit(
+            side_timestamps_single_frame['Timestamp'].values[correct_diff_idx].reshape(-1, 1),
+            diff.values[correct_diff_idx])
+        slope_true = model_true.coef_[0]
+        intercept_true = model_true.intercept_
+        adjusted_timestamps = other_timestamps['Timestamp'] - (
+                    slope_true * other_timestamps['Timestamp'] + intercept_true)
+        return adjusted_timestamps
 
     def update_marker_size(self, val):
         current_xlim = [ax.get_xlim() for ax in self.axs]
@@ -681,29 +802,31 @@ class CalibrateCamerasTool:
 
     def show_frames(self, val=None):
         frame_number = self.current_frame_index
-        self.frame_label.config(text=f"Frame: {frame_number}/{self.total_frames - 1}")
+        self.frame_label.config(text=f"Frame: {frame_number}/{len(self.matched_frames) - 1}")
 
-        self.cap_side.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-        ret_side, frame_side = self.cap_side.read()
+        frame_side, frame_front, frame_overhead = self.matched_frames[frame_number]
 
-        self.cap_front.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-        ret_front, frame_front = self.cap_front.read()
+        self.cap_side.set(cv2.CAP_PROP_POS_FRAMES, frame_side)
+        ret_side, frame_side_img = self.cap_side.read()
 
-        self.cap_overhead.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-        ret_overhead, frame_overhead = self.cap_overhead.read()
+        self.cap_front.set(cv2.CAP_PROP_POS_FRAMES, frame_front)
+        ret_front, frame_front_img = self.cap_front.read()
+
+        self.cap_overhead.set(cv2.CAP_PROP_POS_FRAMES, frame_overhead)
+        ret_overhead, frame_overhead_img = self.cap_overhead.read()
 
         if ret_side and ret_front and ret_overhead:
-            frame_side = self.apply_contrast_brightness(frame_side)
-            frame_front = self.apply_contrast_brightness(frame_front)
-            frame_overhead = self.apply_contrast_brightness(frame_overhead)
+            frame_side_img = self.apply_contrast_brightness(frame_side_img)
+            frame_front_img = self.apply_contrast_brightness(frame_front_img)
+            frame_overhead_img = self.apply_contrast_brightness(frame_overhead_img)
 
             self.axs[0].cla()
             self.axs[1].cla()
             self.axs[2].cla()
 
-            self.axs[0].imshow(cv2.cvtColor(frame_side, cv2.COLOR_BGR2RGB))
-            self.axs[1].imshow(cv2.cvtColor(frame_front, cv2.COLOR_BGR2RGB))
-            self.axs[2].imshow(cv2.cvtColor(frame_overhead, cv2.COLOR_BGR2RGB))
+            self.axs[0].imshow(cv2.cvtColor(frame_side_img, cv2.COLOR_BGR2RGB))
+            self.axs[1].imshow(cv2.cvtColor(frame_front_img, cv2.COLOR_BGR2RGB))
+            self.axs[2].imshow(cv2.cvtColor(frame_overhead_img, cv2.COLOR_BGR2RGB))
 
             self.axs[0].set_title('Side View')
             self.axs[1].set_title('Front View')
@@ -744,16 +867,17 @@ class LabelFramesTool:
         self.current_view = tk.StringVar(value="side")
         self.projection_view = tk.StringVar(value="side")  # view to project points from
         self.body_part_points = {}
-        self.calibration_points_static = {label: {"side": None, "front": None, "overhead": None} for label in
-                                          config.CALIBRATION_LABELS}
+        self.calibration_points_static = {label: {"side": None, "front": None, "overhead": None} for label in config.CALIBRATION_LABELS}
         self.cam_reprojected_points = {'near': {}, 'far': {}}
         self.frames = {'side': [], 'front': [], 'overhead': []}
-        self.frame_names = {'side': [], 'front': [], 'overhead': []}
         self.projection_lines = {'side': None, 'front': None, 'overhead': None}
         self.P = None
         self.tooltip = None
         self.label_buttons = []
         self.tooltip_window = None
+        self.matched_frames = []  # Add this to ensure matched_frames is initialized
+        self.frame_names = {'side': [], 'front': [], 'overhead': []}
+        self.frame_numbers = {'side': [], 'front': [], 'overhead': []}
 
         self.crosshair_lines = []
         self.dragging_point = None
@@ -823,6 +947,8 @@ class LabelFramesTool:
     def load_frames(self):
         valid_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tiff"}
 
+        # self.frame_numbers = {'side': [], 'front': [], 'overhead': []}
+
         for view in self.frames.keys():
             frame_files = sorted(
                 (f for f in os.listdir(self.extracted_frames_path[view]) if
@@ -833,13 +959,17 @@ class LabelFramesTool:
                 frame = cv2.imread(os.path.join(self.extracted_frames_path[view], file))
                 self.frames[view].append(frame)
                 self.frame_names[view].append(file)
+                image_number = int(os.path.splitext(file)[0].replace('img', ''))
+                self.frame_numbers[view].append(image_number)
 
         min_frame_count = min(len(self.frames[view]) for view in self.frames if self.frames[view])
         for view in self.frames:
             self.frames[view] = self.frames[view][:min_frame_count]
+            self.frame_numbers[view] = self.frame_numbers[view][:min_frame_count]
 
-        for view in self.frames:
-            print(f"Number of frames loaded for {view}: {len(self.frames[view])}")
+        print(f"Number of frames loaded for side: {len(self.frames['side'])}")
+        print(f"Number of frames loaded for front: {len(self.frames['front'])}")
+        print(f"Number of frames loaded for overhead: {len(self.frames['overhead'])}")
 
         if min_frame_count == 0:
             messagebox.showerror("Error", "No frames found in the directories.")
@@ -848,15 +978,17 @@ class LabelFramesTool:
 
         self.loading_popup.destroy()
 
-        # Initialize body_part_points for all frames
         self.body_part_points = {
             frame_idx: {label: {"side": None, "front": None, "overhead": None} for label in self.labels}
             for frame_idx in range(min_frame_count)
         }
 
+        self.match_frames()  # Call match_frames here
+
         self.setup_labeling_ui()
 
-        video_names = {view: os.path.basename(self.extracted_frames_path[view]) for view in ['side', 'front', 'overhead']}
+        video_names = {view: os.path.basename(self.extracted_frames_path[view]) for view in
+                       ['side', 'front', 'overhead']}
 
         for view in ['side', 'front', 'overhead']:
             label_file_path = os.path.join(config.LABEL_SAVE_PATH_TEMPLATE[view].format(video_name=video_names[view]),
@@ -864,11 +996,14 @@ class LabelFramesTool:
             if os.path.exists(label_file_path):
                 self.load_existing_labels(label_file_path, view)
 
-        # Load calibration data and populate body_part_points with calibration labels
         self.load_calibration_data(self.calibration_file_path)
 
-
         self.display_frame()
+
+    def match_frames(self):
+        min_frame_count = min(len(self.frames['side']), len(self.frames['front']), len(self.frames['overhead']))
+        self.matched_frames = [(i, i, i) for i in range(min_frame_count)]
+        print(f"Matched frames: {len(self.matched_frames)}")
 
     def setup_labeling_ui(self):
         self.main_tool.clear_root()
@@ -1223,16 +1358,28 @@ class LabelFramesTool:
         self.display_frame()
 
     def display_frame(self):
-        for i, (ax, view) in enumerate(zip(self.axs, ['side', 'front', 'overhead'])):
-            ax.cla()
-            frame = cv2.cvtColor(self.frames[view][self.current_frame_index], cv2.COLOR_BGR2RGB)
-            frame = self.apply_contrast_brightness(frame)
-            ax.imshow(frame)
-            ax.set_title(f'{view.capitalize()} View', fontsize=8)
-            ax.axis('off')
+        frame_side, frame_front, frame_overhead = self.matched_frames[self.current_frame_index]
 
-        self.show_body_part_points()
-        self.draw_reprojected_points()
+        frame_side_img = self.frames['side'][frame_side]
+        frame_front_img = self.frames['front'][frame_front]
+        frame_overhead_img = self.frames['overhead'][frame_overhead]
+
+        frame_side_img = self.apply_contrast_brightness(frame_side_img)
+        frame_front_img = self.apply_contrast_brightness(frame_front_img)
+        frame_overhead_img = self.apply_contrast_brightness(frame_overhead_img)
+
+        self.axs[0].cla()
+        self.axs[1].cla()
+        self.axs[2].cla()
+
+        self.axs[0].imshow(cv2.cvtColor(frame_side_img, cv2.COLOR_BGR2RGB))
+        self.axs[1].imshow(cv2.cvtColor(frame_front_img, cv2.COLOR_BGR2RGB))
+        self.axs[2].imshow(cv2.cvtColor(frame_overhead_img, cv2.COLOR_BGR2RGB))
+
+        self.axs[0].set_title('Side View')
+        self.axs[1].set_title('Front View')
+        self.axs[2].set_title('Overhead View')
+
         self.canvas.draw()
 
     def show_body_part_points(self, draw=True):
@@ -1365,13 +1512,13 @@ class LabelFramesTool:
             calibration_coordinates = pd.read_csv(calibration_data_path)
             calib = BasicCalibration(calibration_coordinates)
             cameras_extrinsics = calib.estimate_cams_pose()
-            cameras_intrisinics = calib.cameras_intrinsics
+            cameras_intrinsics = calib.cameras_intrinsics
             belt_points_WCS = calib.belt_coords_WCS
             belt_points_CCS = calib.belt_coords_CCS
 
             self.calibration_data = {
                 'extrinsics': cameras_extrinsics,
-                'intrinsics': cameras_intrisinics,
+                'intrinsics': cameras_intrinsics,
                 'belt points WCS': belt_points_WCS,
                 'belt points CCS': belt_points_CCS
             }
@@ -1512,18 +1659,13 @@ class LabelFramesTool:
         video_names = {view: os.path.basename(self.extracted_frames_path[view]) for view in
                        ['side', 'front', 'overhead']}
 
-        side_path = os.path.join(
-            config.LABEL_SAVE_PATH_TEMPLATE['side'].format(video_name=video_names['side']),
-            "CollectedData_Holly.csv"
-        )
-        front_path = os.path.join(
-            config.LABEL_SAVE_PATH_TEMPLATE['front'].format(video_name=video_names['front']),
-            "CollectedData_Holly.csv"
-        )
+        side_path = os.path.join(config.LABEL_SAVE_PATH_TEMPLATE['side'].format(video_name=video_names['side']),
+                                 "CollectedData_Holly.csv")
+        front_path = os.path.join(config.LABEL_SAVE_PATH_TEMPLATE['front'].format(video_name=video_names['front']),
+                                  "CollectedData_Holly.csv")
         overhead_path = os.path.join(
             config.LABEL_SAVE_PATH_TEMPLATE['overhead'].format(video_name=video_names['overhead']),
-            "CollectedData_Holly.csv"
-        )
+            "CollectedData_Holly.csv")
 
         print(f"Saving labels to paths:\nSide: {side_path}\nFront: {front_path}\nOverhead: {overhead_path}")
 
@@ -1531,49 +1673,41 @@ class LabelFramesTool:
         os.makedirs(os.path.dirname(front_path), exist_ok=True)
         os.makedirs(os.path.dirname(overhead_path), exist_ok=True)
 
-        # Initialize data and filenames
         data = []
         frame_filenames = {"side": [], "front": [], "overhead": []}
 
-        # Gather data
         for frame_idx, labels in self.body_part_points.items():
             for label, views in labels.items():
                 for view, coords in views.items():
                     if coords is not None:
                         x, y = coords
-                        filename = self.frame_names[view][frame_idx]
+                        frame_number = self.matched_frames[frame_idx][['side', 'front', 'overhead'].index(view)]
+                        filename = self.frame_names[view][frame_number]
                         video_filename = os.path.basename(self.extracted_frames_path[view])
-                        data.append((frame_idx, label, view, x, y, "Holly", video_filename, filename))
+                        data.append((frame_idx, label, view, x, y, "Holly", video_filename, filename, frame_number))
                         frame_filenames[view].append(filename)
 
-        # Create DataFrame
         df = pd.DataFrame(data, columns=["frame_index", "label", "view", "x", "y", "scorer", "video_filename",
-                                         "frame_filename"])
+                                         "frame_filename", "image_number"])
 
-        # Define the ordered columns
         ordered_cols = []
         for view in ['side', 'front', 'overhead']:
             for scorer in df['scorer'].unique():
                 for bodypart in config.BODY_PART_LABELS:
                     ordered_cols.extend([(scorer, view, bodypart, coord) for coord in ['x', 'y']])
 
-        # make multi index where each frame image has a row with data_name, video_filename, frame_filename
         idxs = []
         for frame in df['frame_index'].unique():
-            # find video_filename and frame_filename for this frame
             df_frame = df[df['frame_index'] == frame]
             video_filename = df_frame['video_filename'].values[0]
             frame_filename = df_frame['frame_filename'].values[0]
             idxs.append(('labeled_data', video_filename, frame_filename))
         Idxs = pd.MultiIndex.from_tuples(idxs)
 
-        # Create a MultiIndex with the ordered columns
         ordered_cols_index = pd.MultiIndex.from_tuples(ordered_cols, names=['scorer', 'view', 'bodyparts', 'coords'])
 
-        # Create an empty DataFrame with the ordered_index
         df_ordered = pd.DataFrame(index=Idxs, columns=ordered_cols_index)
 
-        # Populate the ordered DataFrame with existing data
         for frame_idx, frame_name in enumerate(Idxs):
             for label, views in self.body_part_points[frame_idx].items():
                 for view, coords in views.items():
@@ -1582,11 +1716,9 @@ class LabelFramesTool:
                         df_ordered.loc[frame_name, ('Holly', view, label, 'x')] = x
                         df_ordered.loc[frame_name, ('Holly', view, label, 'y')] = y
 
-        # Print the ordered DataFrame for debugging
         print("df_ordered:")
         print(df_ordered)
 
-        # Ensure data types are compatible with HDF5 storage
         for col in df_ordered.columns:
             df_ordered[col] = pd.to_numeric(df_ordered[col], errors='coerce')
 
@@ -1594,8 +1726,14 @@ class LabelFramesTool:
         for view in ['side', 'front', 'overhead']:
             df_view = df_ordered.xs(view, level='view', axis=1, drop_level=True).copy()
             save_path = {'side': side_path, 'front': front_path, 'overhead': overhead_path}[view]
-            df_view.to_csv(save_path)
-            df_view.to_hdf(save_path.replace(".csv", ".h5"), key='df', mode='w', format='fixed')
+            print(f"Saving to {save_path}")
+            try:
+                df_view.to_csv(save_path)
+                df_view.to_hdf(save_path.replace(".csv", ".h5"), key='df', mode='w', format='fixed')
+            except PermissionError as e:
+                print(f"PermissionError: {e}")
+                messagebox.showerror("Error",
+                                     f"Unable to save the file at {save_path}. Please check the file permissions.")
 
         print("Labels saved successfully")
         messagebox.showinfo("Info", "Labels saved successfully")
