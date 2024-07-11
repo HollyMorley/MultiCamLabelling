@@ -863,7 +863,7 @@ class LabelFramesTool:
         self.canvas = None
         self.labels = config.BODY_PART_LABELS
         self.label_colors = self.generate_label_colors(self.labels)
-        self.current_label = tk.StringVar(value=self.labels[0])
+        self.current_label = tk.StringVar(value='Nose')
         self.current_view = tk.StringVar(value="side")
         self.projection_view = tk.StringVar(value="side")  # view to project points from
         self.body_part_points = {}
@@ -996,6 +996,7 @@ class LabelFramesTool:
             if os.path.exists(label_file_path):
                 self.load_existing_labels(label_file_path, view)
 
+        # Load calibration data and populate body_part_points with calibration labels
         self.load_calibration_data(self.calibration_file_path)
 
         self.display_frame()
@@ -1113,6 +1114,10 @@ class LabelFramesTool:
             label_button.pack(fill=tk.X, pady=1)
             self.label_buttons.append(label_button)
 
+        # Ensure "Nose" is selected by default
+        self.current_label.set("Nose")
+        self.update_label_button_selection()
+
         self.fig, self.axs = plt.subplots(3, 1, figsize=(10, 10))  # Adjust figure size for better fit
         self.fig.subplots_adjust(left=0.005, right=0.995, top=0.99, bottom=0.01, wspace=0.01, hspace=0.005)
         self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
@@ -1133,6 +1138,11 @@ class LabelFramesTool:
         self.canvas.mpl_connect("motion_notify_event", self.show_tooltip)
 
         self.display_frame()
+
+    def update_label_button_selection(self):
+        for button in self.label_buttons:
+            if button.cget('text') == self.current_label.get():
+                button.select()
 
     def load_existing_labels(self, label_file_path, view):
         # Replace filepath with h5 file
@@ -1356,6 +1366,7 @@ class LabelFramesTool:
         self.current_frame_index = max(0, min(self.current_frame_index, len(self.frames['side']) - 1))
         self.frame_label.config(text=f"Frame: {self.current_frame_index + 1}/{len(self.frames['side'])}")
         self.display_frame()
+        self.current_label.set("Nose")
 
     def display_frame(self):
         frame_side, frame_front, frame_overhead = self.matched_frames[self.current_frame_index]
@@ -1380,7 +1391,12 @@ class LabelFramesTool:
         self.axs[1].set_title('Front View')
         self.axs[2].set_title('Overhead View')
 
+        self.show_body_part_points()
         self.canvas.draw()
+
+        # Reset to 'Nose' label
+        self.current_label.set("Nose")
+        self.update_label_button_selection()
 
     def show_body_part_points(self, draw=True):
         for ax in self.axs:
@@ -1536,6 +1552,9 @@ class LabelFramesTool:
                         x = x_vals[0]
                         y = y_vals[0]
                         self.calibration_points_static[label][view] = (x, y)
+                        if label != 'Door':
+                            for frame in self.body_part_points.keys():
+                                self.body_part_points[frame][label][view] = (x, y)
                     else:
                         self.calibration_points_static[label][view] = None
                         print(f"Missing data for {label} in {view} view")
@@ -1658,24 +1677,18 @@ class LabelFramesTool:
     def save_labels(self):
         video_names = {view: os.path.basename(self.extracted_frames_path[view]) for view in
                        ['side', 'front', 'overhead']}
+        save_paths = {
+            'side': os.path.join(config.LABEL_SAVE_PATH_TEMPLATE['side'].format(video_name=video_names['side']),
+                                "CollectedData_Holly.csv"),
+            'front': os.path.join(config.LABEL_SAVE_PATH_TEMPLATE['front'].format(video_name=video_names['front']),
+                                "CollectedData_Holly.csv"),
+            'overhead': os.path.join(config.LABEL_SAVE_PATH_TEMPLATE['overhead'].format(video_name=video_names['overhead']),
+                                "CollectedData_Holly.csv")
+        }
+        for path in save_paths.values():
+            os.makedirs(os.path.dirname(path), exist_ok=True)
 
-        side_path = os.path.join(config.LABEL_SAVE_PATH_TEMPLATE['side'].format(video_name=video_names['side']),
-                                 "CollectedData_Holly.csv")
-        front_path = os.path.join(config.LABEL_SAVE_PATH_TEMPLATE['front'].format(video_name=video_names['front']),
-                                  "CollectedData_Holly.csv")
-        overhead_path = os.path.join(
-            config.LABEL_SAVE_PATH_TEMPLATE['overhead'].format(video_name=video_names['overhead']),
-            "CollectedData_Holly.csv")
-
-        print(f"Saving labels to paths:\nSide: {side_path}\nFront: {front_path}\nOverhead: {overhead_path}")
-
-        os.makedirs(os.path.dirname(side_path), exist_ok=True)
-        os.makedirs(os.path.dirname(front_path), exist_ok=True)
-        os.makedirs(os.path.dirname(overhead_path), exist_ok=True)
-
-        data = []
-        frame_filenames = {"side": [], "front": [], "overhead": []}
-
+        data = {view: [] for view in ['side', 'front', 'overhead']}
         for frame_idx, labels in self.body_part_points.items():
             for label, views in labels.items():
                 for view, coords in views.items():
@@ -1684,52 +1697,32 @@ class LabelFramesTool:
                         frame_number = self.matched_frames[frame_idx][['side', 'front', 'overhead'].index(view)]
                         filename = self.frame_names[view][frame_number]
                         video_filename = os.path.basename(self.extracted_frames_path[view])
-                        data.append((frame_idx, label, view, x, y, "Holly", video_filename, filename, frame_number))
-                        frame_filenames[view].append(filename)
+                        data[view].append((frame_idx, label, x, y, "Holly", video_filename, filename))
 
-        df = pd.DataFrame(data, columns=["frame_index", "label", "view", "x", "y", "scorer", "video_filename",
-                                         "frame_filename", "image_number"])
+        for view, view_data in data.items():
+            df_view = pd.DataFrame(view_data, columns=["frame_index", "label", "x", "y", "scorer", "video_filename",
+                                                  "frame_filename"])
 
-        ordered_cols = []
-        for view in ['side', 'front', 'overhead']:
-            for scorer in df['scorer'].unique():
-                for bodypart in config.BODY_PART_LABELS:
-                    ordered_cols.extend([(scorer, view, bodypart, coord) for coord in ['x', 'y']])
+            # Initialize an empty DataFrame with the correct columns
+            multi_cols = pd.MultiIndex.from_product([['Holly'], self.labels, ['x', 'y']],
+                                                    names=['scorer', 'bodyparts', 'coords'])
+            multi_idx = pd.MultiIndex.from_tuples(
+                [('labeled_data', video_names[view], filename) for filename in df_view['frame_filename'].unique()])
+            df_ordered = pd.DataFrame(index=multi_idx, columns=multi_cols)
 
-        idxs = []
-        for frame in df['frame_index'].unique():
-            df_frame = df[df['frame_index'] == frame]
-            video_filename = df_frame['video_filename'].values[0]
-            frame_filename = df_frame['frame_filename'].values[0]
-            idxs.append(('labeled_data', video_filename, frame_filename))
-        Idxs = pd.MultiIndex.from_tuples(idxs)
+            for _, row in df_view.iterrows():
+                df_ordered.loc[('labeled_data', row.video_filename, row.frame_filename), ('Holly', row.label, 'x')] = row.x
+                df_ordered.loc[('labeled_data', row.video_filename, row.frame_filename), ('Holly', row.label, 'y')] = row.y
 
-        ordered_cols_index = pd.MultiIndex.from_tuples(ordered_cols, names=['scorer', 'view', 'bodyparts', 'coords'])
+            # Convert the DataFrame to numeric values to ensure saving works
+            df_ordered = df_ordered.apply(pd.to_numeric)
 
-        df_ordered = pd.DataFrame(index=Idxs, columns=ordered_cols_index)
-
-        for frame_idx, frame_name in enumerate(Idxs):
-            for label, views in self.body_part_points[frame_idx].items():
-                for view, coords in views.items():
-                    if coords is not None:
-                        x, y = coords
-                        df_ordered.loc[frame_name, ('Holly', view, label, 'x')] = x
-                        df_ordered.loc[frame_name, ('Holly', view, label, 'y')] = y
-
-        print("df_ordered:")
-        print(df_ordered)
-
-        for col in df_ordered.columns:
-            df_ordered[col] = pd.to_numeric(df_ordered[col], errors='coerce')
-
-        # Save the DataFrames
-        for view in ['side', 'front', 'overhead']:
-            df_view = df_ordered.xs(view, level='view', axis=1, drop_level=True).copy()
-            save_path = {'side': side_path, 'front': front_path, 'overhead': overhead_path}[view]
+            # Save the DataFrame
+            save_path = save_paths[view]
             print(f"Saving to {save_path}")
             try:
-                df_view.to_csv(save_path)
-                df_view.to_hdf(save_path.replace(".csv", ".h5"), key='df', mode='w', format='fixed')
+                df_ordered.to_csv(save_path)
+                df_ordered.to_hdf(save_path.replace(".csv", ".h5"), key='df', mode='w', format='fixed')
             except PermissionError as e:
                 print(f"PermissionError: {e}")
                 messagebox.showerror("Error",
@@ -1737,6 +1730,7 @@ class LabelFramesTool:
 
         print("Labels saved successfully")
         messagebox.showinfo("Info", "Labels saved successfully")
+
 
     def parse_video_path(self, video_path):
         video_file = os.path.basename(video_path)
