@@ -15,6 +15,8 @@ import h5py
 from scipy.optimize import minimize
 from sklearn.linear_model import LinearRegression
 from tqdm import tqdm
+import time
+from functools import lru_cache
 
 import Helpers.MultiCamLabelling_config as config
 from Helpers.CalibrateCams import BasicCalibration
@@ -888,6 +890,8 @@ class LabelFramesTool:
         self.spacer_lines_points = []
         self.spacer_lines = []
 
+        self.last_update_time = 0
+
         self.label_frames_menu()
 
     def label_frames_menu(self):
@@ -1471,13 +1475,12 @@ class LabelFramesTool:
                         frame_points[label][view] = None
                     frame_points[label][view] = (event.xdata, event.ydata)
                     ax.scatter(event.xdata, event.ydata, c=color, s=marker_size * 10, label=label)
-                    self.canvas.draw()
+                    self.canvas.draw_idle()
                     self.advance_label()
-                    self.draw_reprojected_points()  # Call to update reprojected points
+                    self.draw_reprojected_points()
         elif event.button == MouseButton.LEFT:
             if label == 'Door' or label not in config.CALIBRATION_LABELS:
                 self.dragging_point = self.find_closest_point(ax, event, frame_points)
-
 
     def on_drag(self, event):
         if self.dragging_point is None or event.inaxes not in self.axs:
@@ -1574,17 +1577,26 @@ class LabelFramesTool:
         self.canvas.draw_idle()
 
     def update_contrast_brightness(self, val):
-        current_xlim = [ax.get_xlim() for ax in self.axs]
-        current_ylim = [ax.get_ylim() for ax in self.axs]
-        self.display_frame()
-        for ax, xlim, ylim in zip(self.axs, current_xlim, current_ylim):
-            ax.set_xlim(xlim)
-            ax.set_ylim(ylim)
-        self.canvas.draw_idle()
+        current_time = time.time()
+        if current_time - self.last_update_time > 0.1:  # 100ms debounce time
+            current_xlim = [ax.get_xlim() for ax in self.axs]
+            current_ylim = [ax.get_ylim() for ax in self.axs]
+            self.display_frame()
+            for ax, xlim, ylim in zip(self.axs, current_xlim, current_ylim):
+                ax.set_xlim(xlim)
+                ax.set_ylim(ylim)
+            self.canvas.draw_idle()
+            self.last_update_time = current_time
 
     def apply_contrast_brightness(self, frame):
         contrast = self.contrast_var.get()
         brightness = self.brightness_var.get()
+        frame_bytes = frame.tobytes()
+        return self.cached_apply_contrast_brightness(frame_bytes, frame.shape, contrast, brightness)
+
+    @lru_cache(maxsize=128)
+    def cached_apply_contrast_brightness(self, frame_bytes, frame_shape, contrast, brightness):
+        frame = np.frombuffer(frame_bytes, dtype=np.uint8).reshape(frame_shape)  # Convert bytes back to numpy array
         pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         enhancer = ImageEnhance.Contrast(pil_img)
         img_contrast = enhancer.enhance(contrast)
@@ -1760,7 +1772,7 @@ class LabelFramesTool:
 
     ##################################### Calibration enhancements ############################################
     def optimize_calibration(self):
-        reference_points = ['Nose', 'ForepawToeR', 'ForepawToeL']
+        reference_points = ['Nose', 'ForepawToeR', 'ForepawToeL', 'Back6']
         optimized_points = {}
 
         missing_labels = [label for label in reference_points if
@@ -1799,6 +1811,13 @@ class LabelFramesTool:
 
         self.save_optimized_calibration_points()
 
+        # Reload enhanced calibration points to use for drawing guidance lines
+        enhanced_calibration_path = config.CALIBRATION_SAVE_PATH_TEMPLATE.format(video_name=self.video_name).replace(
+            '.csv', '_enhanced.csv')
+        self.load_calibration_data(enhanced_calibration_path)
+
+        self.display_frame()  # Redraw the frame to reflect the changes
+
     def optimize_point(self, label, view, initial_point, reference_points):
         def reprojection_error(point):
             self.calibration_points_static[label][view] = point
@@ -1807,10 +1826,16 @@ class LabelFramesTool:
             return total_error
 
         initial_point = np.array(initial_point, dtype=float)
+
         result = minimize(reprojection_error, initial_point, method='L-BFGS-B',
                           bounds=[(initial_point[0] - 3.0, initial_point[0] + 3.0),
                                   (initial_point[1] - 3.0, initial_point[1] + 3.0)],
-                          options={'maxiter': 500, 'ftol': 1e-8, 'gtol': 1e-8, 'disp': False})
+                          options={'maxiter': 3000, 'ftol': 1e-8, 'gtol': 1e-8, 'disp': False})
+        ## make multi dimensional ( all reference pts and x/y)
+        ## increase tolerance OR lower iterations (3000 may already be really low, check defaults), because i dont need that low tolerance
+        ## check if learning rate is a parameter to set
+
+
         return result.x
 
     def compute_reprojection_error(self, labels):
