@@ -17,6 +17,8 @@ from sklearn.linear_model import LinearRegression
 from tqdm import tqdm
 import time
 from functools import lru_cache
+from pycalib.calib import triangulate
+
 
 import Helpers.MultiCamLabelling_config as config
 from Helpers.CalibrateCams import BasicCalibration
@@ -408,6 +410,7 @@ class CalibrateCamerasTool:
         self.match_frames(timestamps_side_adj, timestamps_front_adj, timestamps_overhead_adj)
 
         self.calibration_file_path = config.CALIBRATION_SAVE_PATH_TEMPLATE.format(video_name=self.video_name)
+        enhanced_calibration_file = self.calibration_file_path.replace('.csv', '_enhanced.csv')
         default_calibration_file = config.DEFAULT_CALIBRATION_FILE_PATH
 
         self.mode = 'calibration'
@@ -496,7 +499,9 @@ class CalibrateCamerasTool:
         self.calibration_points_static = {label: {"side": None, "front": None, "overhead": None} for label in
                                           self.labels}
 
-        if os.path.exists(self.calibration_file_path):
+        if os.path.exists(enhanced_calibration_file):
+            self.load_calibration_points(enhanced_calibration_file)
+        elif os.path.exists(self.calibration_file_path):
             response = messagebox.askyesnocancel("Calibration Found",
                                                  "Calibration labels found. Do you want to load them? (Yes to load current, No to load default, Cancel to skip)")
             if response is None:
@@ -920,8 +925,9 @@ class LabelFramesTool:
         self.video_name = os.path.basename(calibration_folder_path)
         self.video_date = self.extract_date_from_folder_path(calibration_folder_path)
         self.calibration_file_path = os.path.join(calibration_folder_path, "calibration_labels.csv")
+        enhanced_calibration_file = self.calibration_file_path.replace('.csv', '_enhanced.csv')
 
-        if not os.path.exists(self.calibration_file_path):
+        if not os.path.exists(self.calibration_file_path) and not os.path.exists(enhanced_calibration_file):
             messagebox.showerror("Error", "No corresponding camera calibration data found.")
             return
 
@@ -945,7 +951,7 @@ class LabelFramesTool:
         self.show_loading_popup()
 
         self.frames = {'side': [], 'front': [], 'overhead': []}
-        self.root.after(100, self.load_frames)
+        self.root.after(100, self.load_frames, enhanced_calibration_file)
 
     def show_loading_popup(self):
         self.loading_popup = tk.Toplevel(self.root)
@@ -962,10 +968,8 @@ class LabelFramesTool:
                 return part
         return None
 
-    def load_frames(self):
+    def load_frames(self, enhanced_calibration_file):
         valid_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tiff"}
-
-        # self.frame_numbers = {'side': [], 'front': [], 'overhead': []}
 
         for view in self.frames.keys():
             frame_files = sorted(
@@ -1014,8 +1018,10 @@ class LabelFramesTool:
             if os.path.exists(label_file_path):
                 self.load_existing_labels(label_file_path, view)
 
-        # Load calibration data and populate body_part_points with calibration labels
-        self.load_calibration_data(self.calibration_file_path)
+        if os.path.exists(enhanced_calibration_file):
+            self.load_calibration_data(enhanced_calibration_file)
+        else:
+            self.load_calibration_data(self.calibration_file_path)
 
         self.display_frame()
 
@@ -1137,7 +1143,14 @@ class LabelFramesTool:
         self.update_label_button_selection()
 
         self.fig, self.axs = plt.subplots(3, 1, figsize=(10, 10))  # Adjust figure size for better fit
-        self.fig.subplots_adjust(left=0.005, right=0.995, top=0.99, bottom=0.01, wspace=0.01, hspace=0.005)
+        self.fig.subplots_adjust(left=0.02, right=0.999, top=0.99, bottom=0.01, wspace=0.01, hspace=0.005)
+
+        for ax in self.axs:
+            ax.tick_params(axis='both', which='major', labelsize=8)
+            ax.xaxis.set_major_locator(plt.MultipleLocator(50))
+            ax.yaxis.set_major_locator(plt.MultipleLocator(50))
+            #ax.grid(visible=True, linestyle='--', linewidth=0.5)
+
         self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -1210,21 +1223,28 @@ class LabelFramesTool:
             self.tooltip_window.destroy()
             self.tooltip_window = None
 
-    def get_p(self, view):
+    def get_p(self, view, extrinsics=None, return_value=False):
+        if extrinsics is None:
+            extrinsics = self.calibration_data['extrinsics']
         if self.calibration_data:
             # Camera intrinsics
             K = self.calibration_data['intrinsics'][view]
 
             # Camera extrinsics
-            R = self.calibration_data['extrinsics'][view]['rotm']
-            t = self.calibration_data['extrinsics'][view]['tvec']
+            R = extrinsics[view]['rotm']
+            t = extrinsics[view]['tvec']
 
             # Ensure t is a column vector
             if t.ndim == 1:
                 t = t[:, np.newaxis]
 
             # Form the projection matrix
-            self.P = np.dot(K, np.hstack((R, t)))
+            P = np.dot(K, np.hstack((R, t)))
+
+            if return_value:
+                return P
+            else:
+                self.P = P
 
     def get_camera_center(self, view):
         if self.calibration_data:
@@ -1362,15 +1382,20 @@ class LabelFramesTool:
                 frame = self.apply_contrast_brightness(frame)
                 ax.imshow(frame)
                 ax.set_title(f'{view.capitalize()} View', fontsize=8)
-                ax.axis('off')
+                ax.axis('on')
 
                 if view in self.cam_reprojected_points['near'] and view in self.cam_reprojected_points['far']:
                     near_point = self.cam_reprojected_points['near'][view]
                     far_point = self.cam_reprojected_points['far'][view]
 
                     # Draw the line between near and far points and store it
-                    self.projection_lines[view], = ax.plot([near_point[0], far_point[0]], [near_point[1], far_point[1]],
-                                                           'r-', linewidth=0.5, linestyle='--')
+                    self.projection_lines[view], = ax.plot(
+                        [near_point[0], far_point[0]], [near_point[1], far_point[1]],
+                        color='red', linestyle='--', linewidth=0.5
+                    )
+
+                # Apply tick settings explicitly
+                ax.tick_params(axis='both', which='both', direction='in', top=True, right=True, labelsize=8)
 
         self.show_body_part_points()  # Redraw body part points to ensure they are displayed correctly
         self.canvas.draw_idle()
@@ -1405,9 +1430,13 @@ class LabelFramesTool:
         self.axs[1].imshow(cv2.cvtColor(frame_front_img, cv2.COLOR_BGR2RGB))
         self.axs[2].imshow(cv2.cvtColor(frame_overhead_img, cv2.COLOR_BGR2RGB))
 
-        self.axs[0].set_title('Side View')
-        self.axs[1].set_title('Front View')
-        self.axs[2].set_title('Overhead View')
+        self.axs[0].set_title('Side View', fontsize=8)
+        self.axs[1].set_title('Front View', fontsize=8)
+        self.axs[2].set_title('Overhead View', fontsize=8)
+
+        for ax in self.axs:
+            # Apply tick settings explicitly
+            ax.tick_params(axis='both', which='both', direction='in', top=True, right=True, labelsize=8)
 
         self.show_body_part_points()
         self.canvas.draw()
@@ -1576,9 +1605,15 @@ class LabelFramesTool:
                         self.calibration_points_static[label][view] = None
                         print(f"Missing data for {label} in {view} view")
 
+            self.update_projection_matrices()
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load calibration data: {e}")
             print(f"Error loading calibration data: {e}")
+
+    def update_projection_matrices(self):
+        for view in ["side", "front", "overhead"]:
+            self.get_p(view)  # Update P matrix for each view
 
     def update_marker_size(self, val):
         current_xlim = [ax.get_xlim() for ax in self.axs]
@@ -1800,19 +1835,20 @@ class LabelFramesTool:
 
     ##################################### Calibration enhancements ############################################
     def optimize_calibration(self):
-        reference_points = ['Nose', 'ForepawToeR', 'ForepawToeL', 'Back1', 'Back6', 'Tail12']
+        reference_points = config.OPTIMIZATION_REFERENCE_LABELS
 
-        # print initial reprojection error
+        # Print initial reprojection error
         initial_total_error, initial_errors = self.compute_reprojection_error(reference_points)
         print(f"Initial total reprojection error for {reference_points}: {initial_total_error}")
         for label, views in initial_errors.items():
             print(f"Initial reprojection error for {label}: {views}")
 
         initial_flat_points = self.flatten_calibration_points()
+        args = (reference_points,)
 
         bounds = [(initial_flat_points[i] - 3.0, initial_flat_points[i] + 3.0) for i in range(len(initial_flat_points))]
 
-        result = minimize(self.objective_function, initial_flat_points, method='L-BFGS-B', bounds=bounds,
+        result = minimize(self.objective_function, initial_flat_points, args=args, method='L-BFGS-B', bounds=bounds,
                           options={'maxiter': 15000, 'ftol': 1e-8, 'gtol': 1e-5, 'disp': False})
 
         optimized_points = self.reshape_calibration_points(result.x)
@@ -1831,12 +1867,72 @@ class LabelFramesTool:
 
         self.save_optimized_calibration_points()
 
-        # Reload enhanced calibration points to use for drawing guidance lines
-        enhanced_calibration_path = config.CALIBRATION_SAVE_PATH_TEMPLATE.format(video_name=self.video_name).replace(
-            '.csv', '_enhanced.csv')
-        self.load_calibration_data(enhanced_calibration_path)
+        # Reload enhanced calibration points and update projection matrices
+        self.update_calibration_labels_and_projection()
 
-        self.display_frame()  # Redraw the frame to reflect the changes
+    def compute_reprojection_error(self, labels, extrinsics=None, weighted=False):
+        errors = {label: {"side": 0, "front": 0, "overhead": 0} for label in labels}
+        cams = ["side", "front", "overhead"]
+        total_error = 0
+
+        for label in labels:
+            # Triangulate the 3D point
+            point_3d = self.triangulate(label, extrinsics)
+
+            if point_3d is not None:
+                point_3d = point_3d[:3]  # Get the 3D coordinates
+
+                # Project the 3D point to the other views
+                projections = self.project_to_view(point_3d, extrinsics)
+
+                for view in cams:
+                    if self.body_part_points[self.current_frame_index][label][view] is not None:
+                        original_x, original_y = self.body_part_points[self.current_frame_index][label][view]
+                        if view in projections:
+                            projected_x, projected_y = projections[view]
+                            error = np.sqrt(
+                                (projected_x - original_x) ** 2 + (projected_y - original_y) ** 2)  # Euclidean distance
+                            if weighted:
+                                weight = config.REFERENCE_LABEL_WEIGHTS.get(label,
+                                                                            1.0)  # Default weight is 1.0 if not specified
+                                error *= weight
+                            errors[label][view] = error
+                            total_error += error
+        return total_error, errors
+
+    def triangulate(self, label, extrinsics=None):
+        P = []
+        coords = []
+
+        for view in ["side", "front", "overhead"]:
+            if self.body_part_points[self.current_frame_index][label][view] is not None:
+                P.append(self.get_p(view, extrinsics=extrinsics, return_value=True))
+                coords.append(self.body_part_points[self.current_frame_index][label][view])
+
+        if len(P) < 2 or len(coords) < 2:  # Added this condition
+            return None
+
+        P = np.array(P)
+        coords = np.array(coords)
+
+        point_3d = triangulate(coords, P)
+        return point_3d
+
+    def project_to_view(self, point_3d, extrinsics=None):
+        projections = {}
+        for view in ["side", "front", "overhead"]:
+            if extrinsics is None:
+                extrinsics = self.calibration_data['extrinsics']
+            if extrinsics[view] is not None:
+                CCS_repr, _ = cv2.projectPoints(
+                    point_3d,
+                    cv2.Rodrigues(extrinsics[view]['rotm'])[0],
+                    extrinsics[view]['tvec'],
+                    self.calibration_data['intrinsics'][view],
+                    np.array([]),
+                )
+                projections[view] = CCS_repr[0].flatten()
+        return projections
 
     def flatten_calibration_points(self):
         flat_points = []
@@ -1844,87 +1940,39 @@ class LabelFramesTool:
             for view in ['side', 'front', 'overhead']:
                 if self.calibration_points_static[label][view] is not None:
                     flat_points.extend(self.calibration_points_static[label][view])
-                else:
-                    flat_points.extend([None, None])
         return np.array(flat_points, dtype=float)
 
+    def objective_function(self, flat_points, *args):
+        reference_points = args[0]  # Extract reference points from args
+        calibration_points = self.reshape_calibration_points(flat_points)
+        temp_extrinsics = self.estimate_extrinsics(calibration_points)
+
+        total_error, _ = self.compute_reprojection_error(reference_points, temp_extrinsics, weighted=True)
+        return total_error
+
+    def estimate_extrinsics(self, calibration_points):
+        calibration_coordinates = pd.DataFrame([
+            {'bodyparts': label, 'coords': coord, 'side': calibration_points[label]['side'][i],
+             'front': calibration_points[label]['front'][i],
+             'overhead': calibration_points[label]['overhead'][i]}
+            for label in calibration_points
+            for i, coord in enumerate(['x', 'y'])
+        ])
+
+        calib = BasicCalibration(calibration_coordinates)
+        cameras_extrinsics = calib.estimate_cams_pose()
+        return cameras_extrinsics
+
     def reshape_calibration_points(self, flat_points):
-        calibration_points = {label: {"side": None, "front": None, "overhead": None} for label in config.CALIBRATION_LABELS}
+        calibration_points = {label: {"side": None, "front": None, "overhead": None} for label in
+                              config.CALIBRATION_LABELS}
         i = 0
         for label in config.CALIBRATION_LABELS:
             for view in ['side', 'front', 'overhead']:
-                if not np.isnan(flat_points[i]) and not np.isnan(flat_points[i+1]):
-                    calibration_points[label][view] = [flat_points[i], flat_points[i+1]]
-                i += 2
+                if self.calibration_points_static[label][view] is not None:
+                    calibration_points[label][view] = [flat_points[i], flat_points[i + 1]]
+                    i += 2
         return calibration_points
-
-    def objective_function(self, flat_points):
-        calibration_points = self.reshape_calibration_points(flat_points)
-        self.calibration_points_static = calibration_points
-        self.recalculate_camera_parameters()
-
-        reference_points = ['Nose', 'ForepawToeR', 'ForepawToeL', 'Back1', 'Back6', 'Tail12']
-        total_error, _ = self.compute_reprojection_error(reference_points)
-        return total_error
-
-    def optimize_point(self, view, initial_point, reference_points):
-        def reprojection_error(point):
-            self.calibration_points_static[view] = point
-            self.recalculate_camera_parameters()
-            total_error, _ = self.compute_reprojection_error(reference_points)
-            return total_error
-
-        initial_point = np.array(initial_point, dtype=float)
-
-        result = minimize(reprojection_error, initial_point, method='L-BFGS-B',
-                            bounds=[(initial_point[0] - 3.0, initial_point[0] + 3.0),
-                                    (initial_point[1] - 3.0, initial_point[1] + 3.0)],
-                            options={'maxiter': 3000, 'ftol': 1e-8, 'gtol': 1e-8, 'disp': False})
-        return result.x
-
-    # def optimize_point(self, label, view, initial_point, reference_points):
-    #     def reprojection_error(point):
-    #         self.calibration_points_static[label][view] = point
-    #         self.recalculate_camera_parameters()
-    #         total_error, _ = self.compute_reprojection_error(reference_points)
-    #         return total_error
-    #
-    #     initial_point = np.array(initial_point, dtype=float)
-    #
-    #     result = minimize(reprojection_error, initial_point, method='L-BFGS-B',
-    #                       bounds=[(initial_point[0] - 3.0, initial_point[0] + 3.0),
-    #                               (initial_point[1] - 3.0, initial_point[1] + 3.0)],
-    #                       options={'maxiter': 3000, 'ftol': 1e-8, 'gtol': 1e-8, 'disp': False})
-    #     ## make multi dimensional ( all reference pts and x/y)
-    #     ## increase tolerance OR lower iterations (3000 may already be really low, check defaults), because i dont need that low tolerance
-    #     ## check if learning rate is a parameter to set
-    #     return result.x
-
-    def compute_reprojection_error(self, labels):
-        errors = {label: {"side": 0, "front": 0, "overhead": 0} for label in labels}
-        total_error = 0
-        for label in labels:
-            for view in ["side", "front", "overhead"]:
-                if self.body_part_points[self.current_frame_index].get(label, {}).get(view) is not None:
-                    projected_x, projected_y = self.project_to_view(label, view)
-                    original_x, original_y = self.body_part_points[self.current_frame_index][label][view]
-                    error = np.sqrt((projected_x - original_x) ** 2 + (projected_y - original_y) ** 2)
-                    errors[label][view] = error
-                    total_error += error
-        return total_error, errors
-
-    def project_to_view(self, label, view):
-        point_3d = self.find_projection(view, label)
-        if point_3d is not None:
-            CCS_repr, _ = cv2.projectPoints(
-                point_3d,
-                cv2.Rodrigues(self.calibration_data['extrinsics'][view]['rotm'])[0],
-                self.calibration_data['extrinsics'][view]['tvec'],
-                self.calibration_data['intrinsics'][view],
-                np.array([]),
-            )
-            return CCS_repr[0].flatten()
-        return None, None
 
     def recalculate_camera_parameters(self):
         calibration_coordinates = pd.DataFrame([
@@ -1978,6 +2026,16 @@ class LabelFramesTool:
                 f"Permission denied: Unable to save the file at {calibration_path}. Please check the file permissions.")
             messagebox.showerror("Error",
                                  f"Unable to save the file at {calibration_path}. Please check the file permissions.")
+
+    def update_calibration_labels_and_projection(self):
+        enhanced_calibration_path = config.CALIBRATION_SAVE_PATH_TEMPLATE.format(video_name=self.video_name).replace(
+            '.csv', '_enhanced.csv')
+        if os.path.exists(enhanced_calibration_path):
+            self.load_calibration_data(enhanced_calibration_path)
+            self.update_projection_matrices()
+            self.display_frame()
+        else:
+            print(f"Enhanced calibration file not found: {enhanced_calibration_path}")
 
         ############################################################################################################
 

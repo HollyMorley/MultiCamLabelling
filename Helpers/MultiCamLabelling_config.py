@@ -26,7 +26,16 @@ BODY_PART_LABELS = ["StartPlatL", "StepL", "StartPlatR", "StepR", "Door", "Trans
                     "ForepawToeL", "ForepawKnuckleL", "ForepawAnkleL", "ForepawKneeL",
                     "HindpawToeR", "HindpawKnuckleR", "HindpawAnkleR", "HindpawKneeR",
                     "HindpawToeL", "HindpawKnuckleL", "HindpawAnkleL", "HindpawKneeL"]
-
+OPTIMIZATION_REFERENCE_LABELS = ['Nose', 'ForepawToeR', 'ForepawToeL', 'Back1', 'Back6', 'Tail12', 'StartPlatR']
+REFERENCE_LABEL_WEIGHTS = {
+    'Nose': 2.0,
+    'ForepawToeR': 1.0,
+    'ForepawToeL': 1.0,
+    'Back1': 1,
+    'Back6': 1,
+    'Tail12': 1,
+    'StartPlatR': 0.5,
+}
 
 # Marker Size
 DEFAULT_MARKER_SIZE = 1
