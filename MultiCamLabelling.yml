@@ -1,0 +1,20 @@
+name: MultiCamLabelling
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.8.5
+  - opencv
+  - pandas
+  - numpy
+  - matplotlib
+  - pillow
+  - h5py
+  - scipy
+  - scikit-learn
+  - tqdm
+  - tk
+  - scikit-image
+  - pip
+  - pip:
+      - pycalib

@@ -1,24 +1,25 @@
+import sys
+import os
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.abspath(os.path.join(script_dir, os.pardir))
+sys.path.append(parent_dir)
+
+import Helpers.MultiCamLabelling_config as config
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import cv2
-import os
-import bisect
 import pandas as pd
 import numpy as np
-import mpld3
-from mpld3 import plugins
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.backend_bases import MouseButton
 from PIL import Image, ImageTk, ImageEnhance
-import h5py
 from scipy.optimize import minimize
 from sklearn.linear_model import LinearRegression
-from tqdm import tqdm
 import time
 from functools import lru_cache
 from pycalib.calib import triangulate
-
 
 import Helpers.MultiCamLabelling_config as config
 from Helpers.CalibrateCams import BasicCalibration

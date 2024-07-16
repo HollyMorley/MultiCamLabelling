@@ -4,6 +4,16 @@
 Click [here](https://www.dropbox.com/scl/fo/ifppb8f3ss8z1ijvun3ry/AAAgY5bUVrrvuz4W0q-rYWA?rlkey=1tjdthbuqur7kuqb4a1t0bcza&dl=0) for link to dropbox folder with example data.
 (N.B. update the paths in config file to match your local directory structure.)
 
+Create environment:
+```bash
+conda env create -f [your_path]/MultiCamLabelling.yml
+```
+Run the GUI:
+```bash
+conda activate MultiCamLabelling
+python [your_path]/labelling/MultiCamLabelling.py
+```
+
 ### Main menu:
 **Extraction:**
 *Choose video frames to be labeled*
