@@ -18,5 +18,4 @@ Label:
 - Spacer lines:
   - Press once, right-click two points on the active frame. 12 equally spaced lines will be displayed along the x-axis
 - Optimize calibration:
-  - UNDER CONSTRUCTION
-  - Selecting will adjust manually labeled calibration labels to minimize reprojection error and improve estimated projections
+  - Selecting will adjust manually labeled calibration labels to minimize reprojection error and therefore improve estimated projections
