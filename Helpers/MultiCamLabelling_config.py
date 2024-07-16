@@ -1,20 +1,17 @@
-# config.py
-
 # Paths
-DEFAULT_CALIBRATION_FILE_PATH = "H:/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/CameraCalibration/default_calibration_labels.csv"
-CALIBRATION_SAVE_PATH_TEMPLATE = "H:/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/CameraCalibration/{video_name}/calibration_labels.csv"
+dir = "C:/MultiCamLabelling"
+DEFAULT_CALIBRATION_FILE_PATH = "%s/CameraCalibration/default_calibration_labels.csv" %(dir)
+CALIBRATION_SAVE_PATH_TEMPLATE = "%s/CameraCalibration/{video_name}/calibration_labels.csv" %(dir)
 FRAME_SAVE_PATH_TEMPLATE = {
-    "side": "H:/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Side/{video_name}",
-    "front": "H:/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Front/{video_name}",
-    "overhead": "H:/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Overhead/{video_name}"
+    "side": "%s/Side/{video_name}" %(dir),
+    "front": "%s/Front/{video_name}" %(dir),
+    "overhead": "%s/Overhead/{video_name}" %(dir),
 }
-
 LABEL_SAVE_PATH_TEMPLATE = {
-    "side": "H:/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Side/{video_name}",
-    "front": "H:/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Front/{video_name}",
-    "overhead": "H:/Dual-belt_APAs/analysis/DLC_DualBelt/Manual_Labelling/Overhead/{video_name}"
+    "side": "%s/Side/{video_name}" %(dir),
+    "front": "%s/Front/{video_name}" %(dir),
+    "overhead": "%s/Overhead/{video_name}" %(dir),
 }
-
 
 # Labels
 CALIBRATION_LABELS = ["StartPlatL", "StepL", "StartPlatR", "StepR", "Door", "TransitionL", "TransitionR"]
