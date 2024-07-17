@@ -15,6 +15,7 @@ dependencies:
   - tqdm
   - tk
   - scikit-image
+  - pytables
   - pip
   - pip:
       - pycalib

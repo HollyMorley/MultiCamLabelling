@@ -1,5 +1,7 @@
+# USER SETTINGS
+dir = "C:/Users/hmorl/Downloads/MultiCamLabelling"
+
 # Paths
-dir = "C:/MultiCamLabelling"
 DEFAULT_CALIBRATION_FILE_PATH = "%s/CameraCalibration/default_calibration_labels.csv" %(dir)
 CALIBRATION_SAVE_PATH_TEMPLATE = "%s/CameraCalibration/{video_name}/calibration_labels.csv" %(dir)
 FRAME_SAVE_PATH_TEMPLATE = {

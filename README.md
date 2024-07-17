@@ -1,7 +1,8 @@
 # MultiCamLabelling
 ### GUI for manual labelling across multiple calibrated cameras
 
-Click [here](https://www.dropbox.com/scl/fo/ifppb8f3ss8z1ijvun3ry/AAAgY5bUVrrvuz4W0q-rYWA?rlkey=1tjdthbuqur7kuqb4a1t0bcza&dl=0) for link to dropbox folder with example data.
+Click [here](https://www.dropbox.com/scl/fo/ifppb8f3ss8z1ijvun3ry/AAAgY5bUVrrvuz4W0q-rYWA?rlkey=1tjdthbuqur7kuqb4a1t0bcza&dl=0) 
+for link to dropbox folder with example file structure and pre-made calibration file for provided video.
 (N.B. update the paths in config file to match your local directory structure.)
 
 Create environment:
@@ -10,6 +11,10 @@ conda env create -f [your_path]/MultiCamLabelling.yml
 ```
 Run the GUI:
 ```bash
+# First set the "dir" path in MultiCamLabelling_config.py to the main directory where 
+# the data is stored after download, e.g. "C:/Users/hmorl/Downloads/MultiCamLabelling"
+
+# Then activate the environment and run the GUI
 conda activate MultiCamLabelling
 python [your_path]/labelling/MultiCamLabelling.py
 ```
