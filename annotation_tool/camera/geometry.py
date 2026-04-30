@@ -1,11 +1,69 @@
 """Pure 3D geometry primitives.
 
-Functions in this module are stateless: they take raw arrays / dicts in and
-return raw arrays / dicts out. Reusable building blocks for calibration,
-reconstruction, and epipolar reasoning.
+Plain math functions used as reusable building blocks for calibration,
+reconstruction, and epipolar claculation.
 """
 
+import cv2
 import numpy as np
+
+
+def build_projection_matrix(K, R, t):
+    """Build the 3x4 projection matrix P = K @ [R | t].
+
+    K: (3, 3) intrinsic matrix.
+    R: (3, 3) rotation matrix.
+    t: (3,) or (3, 1) translation vector. Either shape is accepted.
+    """
+    if t.ndim == 1:
+        t = t[:, np.newaxis]
+    return np.dot(K, np.hstack((R, t)))
+
+
+def camera_center_from_extrinsics(R, t):
+    """Optical centre of a camera in world coordinates: C = -R^-1 @ t.
+
+    Returned as a flat (3,) array.
+    """
+    return (-np.dot(np.linalg.inv(R), t)).flatten()
+
+
+def back_project_2d_to_3d(uv, P):
+    """Back-project a 2D image point through projection matrix P to a 3D
+    point on the camera ray.
+
+    Uses the pseudo-inverse of P. The result is one point along the ray;
+    pair it with the camera centre to define the full ray.
+    """
+    uv_h = np.array([uv[0], uv[1], 1.0])
+    X = np.linalg.pinv(P) @ uv_h
+    X /= X[-1]
+    return X[:3]
+
+
+def project_3d_to_views(point_3d, extrinsics, intrinsics, views):
+    """Project a 3D point into each view's image plane.
+
+    extrinsics: dict[view -> {"rotm": (3,3), "tvec": (3,1)}]
+    intrinsics: dict[view -> (3,3) intrinsic matrix K]
+    views: iterable of view names to project into.
+
+    Returns dict[view -> (u, v) array]. Views with extrinsics value of None
+    are skipped.
+    """
+    projections = {}
+    for view in views:
+        if extrinsics.get(view) is None:
+            continue
+        CCS_repr, _ = cv2.projectPoints(
+            point_3d,
+            cv2.Rodrigues(extrinsics[view]["rotm"])[0],
+            extrinsics[view]["tvec"],
+            intrinsics[view],
+            np.array([]),
+        )
+        projections[view] = CCS_repr[0].flatten()
+    return projections
 
 
 def triangulate(points_2d, projection_matrices):
@@ -33,7 +91,8 @@ def triangulate(points_2d, projection_matrices):
 
 
 def clip_ray_to_aabb(origin, direction, aabb):
-    """Clip a 3D ray to an axis-aligned bounding box (AABB) using the slab method.
+    """Clip a 3D ray to an axis-aligned bounding box (AABB) using the slab
+    method.
 
     The ray is parameterised as ``point(t) = origin + t * direction``. For each
     world axis we find the t-values where the ray enters and exits the box's

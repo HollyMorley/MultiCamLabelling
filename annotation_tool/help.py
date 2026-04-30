@@ -125,7 +125,7 @@ FIELD_HELP: dict[str, FieldHelp] = {
             "The 3D box that encloses every body-part position you care "
             "about, declared as per-axis [min, max] ranges. Used by Label "
             "to clip epipolar projection lines: the back-projected ray from "
-            "a clicked 2D point is intersected with this box, and the "
+            "a labelled 2D point is intersected with this box, and the "
             "entry/exit points are re-projected into the other views as a "
             "short, meaningful segment.\n\n"
             "Pick generously — anything outside this box gets cut off. "
@@ -184,7 +184,7 @@ FIELD_HELP: dict[str, FieldHelp] = {
         short="Subset of body parts used by 'Optimize Calibration'. "
               "One label per line.",
         long=(
-            "After initial calibration from your clicked landmarks, the "
+            "After initial calibration from your labelled landmarks, the "
             "Optimize Calibration step in the Label tool refines each "
             "camera's pose to minimise the reprojection error of these "
             "reference body parts across views.\n\n"

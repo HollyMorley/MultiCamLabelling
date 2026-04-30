@@ -16,7 +16,11 @@ from annotation_tool.constants import (
     DEFAULT_BRIGHTNESS, DEFAULT_CONTRAST, DEFAULT_MARKER_SIZE,
 )
 from annotation_tool.camera.calibration import InitialCalibration
-from annotation_tool.camera.geometry import clip_ray_to_aabb, triangulate
+from annotation_tool.camera.geometry import (
+    back_project_2d_to_3d, build_projection_matrix,
+    camera_center_from_extrinsics, clip_ray_to_aabb,
+    project_3d_to_views, triangulate,
+)
 from annotation_tool.gui.base import BaseAnnotationTool
 from annotation_tool.gui.utils import (
     generate_label_colors, apply_contrast_brightness, debounce,
@@ -49,7 +53,6 @@ class LabelFramesTool(BaseAnnotationTool):
         self.cam_reprojected_points = {"near": {}, "far": {}}
         self.frames = {v: [] for v in project.views}
         self.projection_lines = {v: None for v in project.views}
-        self.P = None
         self.tooltip = None
         self.label_buttons = []
         self.tooltip_window = None
@@ -547,47 +550,30 @@ class LabelFramesTool(BaseAnnotationTool):
 
     # ----- 3D projection -----
 
-    def get_p(self, view, extrinsics=None, return_value=False):
-        if extrinsics is None:
-            extrinsics = self.calibration_data["extrinsics"]
-        if self.calibration_data:
-            K = self.calibration_data["intrinsics"][view]
-            R = extrinsics[view]["rotm"]
-            t = extrinsics[view]["tvec"]
-            if t.ndim == 1:
-                t = t[:, np.newaxis]
-            P = np.dot(K, np.hstack((R, t)))
-            if return_value:
-                return P
-            else:
-                self.P = P
-
     def get_camera_center(self, view):
-        if self.calibration_data:
-            R = self.calibration_data["extrinsics"][view]["rotm"]
-            t = self.calibration_data["extrinsics"][view]["tvec"]
-            camera_center = -np.dot(np.linalg.inv(R), t)
-            return camera_center.flatten()
+        if not self.calibration_data:
+            return None
+        e = self.calibration_data["extrinsics"][view]
+        return camera_center_from_extrinsics(e["rotm"], e["tvec"])
 
-    def find_projection(self, view, bp):
-        self.get_p(view)
-        if self.body_part_points[self.current_frame_index][bp][view] is not None:
-            x, y = self.body_part_points[self.current_frame_index][bp][view]
-            if x is not None and y is not None:
-                uv = np.array([x, y, 1.0])
-                P_inv = np.linalg.pinv(self.P)
-                X = np.dot(P_inv, uv)
-                X /= X[-1]
-                return X[:3]
-        return None
+    def back_project_label(self, view, bp):
+        """Back-project the labelled 2D point for `bp` in `view` to a 3D point
+        on the camera ray. Returns None if the label has not been placed yet."""
+        pt = self.body_part_points[self.current_frame_index][bp][view]
+        if pt is None or pt[0] is None or pt[1] is None:
+            return None
+        e = self.calibration_data["extrinsics"][view]
+        K = self.calibration_data["intrinsics"][view]
+        P = build_projection_matrix(K, e["rotm"], e["tvec"])
+        return back_project_2d_to_3d(pt, P)
 
     def find_3d_edges(self, view, bp):
-        """Back-project the clicked 2D point through the camera and clip the
+        """Back-project the labelled 2D point through the camera and clip the
         resulting 3D ray to project.imaging_area. Returns the entry/exit
         points of the ray as it passes through the imaging volume — these
         are then re-projected into the other views as the epipolar segment.
         """
-        point_3d = self.find_projection(view, bp)
+        point_3d = self.back_project_label(view, bp)
         camera_center = self.get_camera_center(view)
         if point_3d is None or camera_center is None:
             return None, None
@@ -606,15 +592,12 @@ class LabelFramesTool(BaseAnnotationTool):
             other_views = [v for v in self.project.views if v != view]
             for wcs in [near_edge, far_edge]:
                 key = "near" if wcs is near_edge else "far"
-                for other_view in other_views:
-                    CCS_repr, _ = cv2.projectPoints(
-                        wcs,
-                        cv2.Rodrigues(self.calibration_data["extrinsics"][other_view]["rotm"])[0],
-                        self.calibration_data["extrinsics"][other_view]["tvec"],
-                        self.calibration_data["intrinsics"][other_view],
-                        np.array([]),
-                    )
-                    self.cam_reprojected_points[key][other_view] = CCS_repr[0].flatten()
+                self.cam_reprojected_points[key].update(project_3d_to_views(
+                    wcs,
+                    self.calibration_data["extrinsics"],
+                    self.calibration_data["intrinsics"],
+                    other_views,
+                ))
 
     def draw_reprojected_points(self):
         self.reproject_3d_to_2d()
@@ -684,15 +667,9 @@ class LabelFramesTool(BaseAnnotationTool):
                         self.calibration_points_static[label][view] = None
                         print(f"Missing data for {label} in {view} view")
 
-            self.update_projection_matrices()
-
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load calibration data: {e}")
             print(f"Error loading calibration data: {e}")
-
-    def update_projection_matrices(self):
-        for view in self.project.views:
-            self.get_p(view)
 
     # ----- Calibration optimization -----
 
@@ -757,35 +734,28 @@ class LabelFramesTool(BaseAnnotationTool):
         return total_error, errors
 
     def triangulate_point(self, label, extrinsics=None):
+        if extrinsics is None:
+            extrinsics = self.calibration_data["extrinsics"]
+        intrinsics = self.calibration_data["intrinsics"]
         P_list = []
         coords = []
         for view in self.project.views:
-            if self.body_part_points[self.current_frame_index][label][view] is not None:
-                P_list.append(self.get_p(view, extrinsics=extrinsics, return_value=True))
-                coords.append(self.body_part_points[self.current_frame_index][label][view])
+            pt = self.body_part_points[self.current_frame_index][label][view]
+            if pt is not None:
+                e = extrinsics[view]
+                P_list.append(build_projection_matrix(intrinsics[view], e["rotm"], e["tvec"]))
+                coords.append(pt)
 
         if len(P_list) < 2 or len(coords) < 2:
             return None
-
-        P_arr = np.array(P_list)
-        coords_arr = np.array(coords)
-        return triangulate(coords_arr, P_arr)
+        return triangulate(np.array(coords), np.array(P_list))
 
     def project_to_view(self, point_3d, extrinsics=None):
-        projections = {}
-        for view in self.project.views:
-            if extrinsics is None:
-                extrinsics = self.calibration_data["extrinsics"]
-            if extrinsics[view] is not None:
-                CCS_repr, _ = cv2.projectPoints(
-                    point_3d,
-                    cv2.Rodrigues(extrinsics[view]["rotm"])[0],
-                    extrinsics[view]["tvec"],
-                    self.calibration_data["intrinsics"][view],
-                    np.array([]),
-                )
-                projections[view] = CCS_repr[0].flatten()
-        return projections
+        if extrinsics is None:
+            extrinsics = self.calibration_data["extrinsics"]
+        return project_3d_to_views(
+            point_3d, extrinsics, self.calibration_data["intrinsics"], self.project.views,
+        )
 
     def flatten_calibration_points(self):
         flat_points = []
@@ -875,7 +845,6 @@ class LabelFramesTool(BaseAnnotationTool):
         enhanced_path = paths.calibration_csv_enhanced(self.project, self.recording)
         if os.path.exists(enhanced_path):
             self.load_calibration_data(enhanced_path)
-            self.update_projection_matrices()
             self.display_frame()
         else:
             print(f"Enhanced calibration file not found: {enhanced_path}")
