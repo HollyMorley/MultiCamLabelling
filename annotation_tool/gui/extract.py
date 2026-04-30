@@ -10,9 +10,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from annotation_tool import paths
 from annotation_tool.constants import DEFAULT_BRIGHTNESS, DEFAULT_CONTRAST
 from annotation_tool.gui.utils import apply_contrast_brightness
-from annotation_tool.gui.sync import (
-    zero_timestamps, adjust_timestamps, match_frames_by_timestamp,
-)
+from annotation_tool.gui.sync import load_synced_video_captures
 
 
 class ExtractFramesTool:
@@ -35,33 +33,18 @@ class ExtractFramesTool:
         list using timestamp synchronisation."""
         self.main_tool.clear_root()
 
-        views = self.project.views
-        ref = self.project.reference_view
-
-        # Open captures
-        for view in views:
-            self.caps[view] = cv2.VideoCapture(paths.video_path(self.project, self.recording, view))
-        self.total_frames = int(self.caps[ref].get(cv2.CAP_PROP_FRAME_COUNT))
+        self.caps, self.total_frames, self.matched_frames = load_synced_video_captures(
+            self.project, self.recording,
+        )
         self.current_frame_index = 0
 
-        frame_counts = {v: int(self.caps[v].get(cv2.CAP_PROP_FRAME_COUNT)) for v in views}
+        frame_counts = {
+            v: int(self.caps[v].get(cv2.CAP_PROP_FRAME_COUNT))
+            for v in self.project.views
+        }
         print("Total frames - " + ", ".join(
-            f"{v.capitalize()}: {frame_counts[v]}" for v in views
+            f"{v.capitalize()}: {frame_counts[v]}" for v in self.project.views
         ))
-
-        # Load and synchronise timestamps. Reference view's timeline is taken
-        # as ground truth; each other view's timestamps are linearly adjusted
-        # to align with it.
-        timestamps = {}
-        for v in views:
-            ts_path = paths.timestamps_path(self.project, self.recording, v)
-            timestamps[v] = zero_timestamps(paths.load_timestamps_csv(ts_path))
-        ts_adj = {ref: timestamps[ref]["Timestamp"].astype(float)}
-        for v in views:
-            if v != ref:
-                ts_adj[v] = adjust_timestamps(timestamps[ref], timestamps[v])
-
-        self.matched_frames = match_frames_by_timestamp(ts_adj, ref, views)
 
         self._show_frames_extraction()
 

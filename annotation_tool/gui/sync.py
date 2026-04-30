@@ -1,8 +1,11 @@
 """Timestamp synchronization and frame matching across multiple cameras."""
 
+import cv2
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
+
+from annotation_tool import paths
 
 
 def zero_timestamps(timestamps):
@@ -39,6 +42,37 @@ def adjust_timestamps(side_timestamps, other_timestamps):
         slope_true * other_timestamps["Timestamp"] + intercept_true
     )
     return adjusted
+
+
+def load_synced_video_captures(project, recording):
+    """Open cv2 captures for every view and build the matched-frame list
+    using timestamp synchronisation against project.reference_view.
+
+    Returns:
+        caps: dict[view -> cv2.VideoCapture]
+        total_frames: int — frame count of the reference view
+        matched_frames: list of per-view frame-number tuples, ordered by
+            project.views (-1 marks views with no matching frame)
+    """
+    views = project.views
+    ref = project.reference_view
+
+    caps = {
+        v: cv2.VideoCapture(paths.video_path(project, recording, v)) for v in views
+    }
+    total_frames = int(caps[ref].get(cv2.CAP_PROP_FRAME_COUNT))
+
+    timestamps = {}
+    for v in views:
+        ts_path = paths.timestamps_path(project, recording, v)
+        timestamps[v] = zero_timestamps(paths.load_timestamps_csv(ts_path))
+    ts_adj = {ref: timestamps[ref]["Timestamp"].astype(float)}
+    for v in views:
+        if v != ref:
+            ts_adj[v] = adjust_timestamps(timestamps[ref], timestamps[v])
+
+    matched_frames = match_frames_by_timestamp(ts_adj, ref, views)
+    return caps, total_frames, matched_frames
 
 
 def match_frames_by_timestamp(timestamps_by_view, reference_view, views_order):

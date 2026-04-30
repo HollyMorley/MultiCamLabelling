@@ -12,9 +12,7 @@ from matplotlib.backend_bases import MouseButton
 from annotation_tool import paths
 from annotation_tool.gui.base import BaseAnnotationTool
 from annotation_tool.gui.utils import generate_label_colors
-from annotation_tool.gui.sync import (
-    zero_timestamps, adjust_timestamps, match_frames_by_timestamp,
-)
+from annotation_tool.gui.sync import load_synced_video_captures
 
 
 class CalibrateCamerasTool(BaseAnnotationTool):
@@ -38,24 +36,11 @@ class CalibrateCamerasTool(BaseAnnotationTool):
         self.main_tool.clear_root()
 
         views = self.project.views
-        ref = self.project.reference_view
 
-        for view in views:
-            self.caps[view] = cv2.VideoCapture(paths.video_path(self.project, self.recording, view))
-        self.total_frames = int(self.caps[ref].get(cv2.CAP_PROP_FRAME_COUNT))
+        self.caps, self.total_frames, self.matched_frames = load_synced_video_captures(
+            self.project, self.recording,
+        )
         self.current_frame_index = 0
-
-        # Load and synchronise timestamps.
-        timestamps = {}
-        for v in views:
-            ts_path = paths.timestamps_path(self.project, self.recording, v)
-            timestamps[v] = zero_timestamps(paths.load_timestamps_csv(ts_path))
-        ts_adj = {ref: timestamps[ref]["Timestamp"].astype(float)}
-        for v in views:
-            if v != ref:
-                ts_adj[v] = adjust_timestamps(timestamps[ref], timestamps[v])
-
-        self.matched_frames = match_frames_by_timestamp(ts_adj, ref, views)
 
         self.calibration_file_path = paths.calibration_csv(self.project, self.recording)
         enhanced_calibration_file = paths.calibration_csv_enhanced(self.project, self.recording)
