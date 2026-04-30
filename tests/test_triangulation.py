@@ -19,7 +19,7 @@ def _project(P, X):
 
 def test_two_views_recover_original_point():
     np = pytest.importorskip("numpy")
-    from annotation_tool.camera.reconstruction import triangulate
+    from annotation_tool.camera.geometry import triangulate
 
     # Each P is a 3x4 projection matrix laid out as:
     #

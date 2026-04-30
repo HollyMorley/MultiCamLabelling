@@ -3,30 +3,6 @@ import numpy as np
 import cv2
 
 
-def triangulate(points_2d, projection_matrices):
-    """Linear (DLT) triangulation of a 3D point from N >= 2 camera views.
-
-    points_2d:           (N, 2) array of 2D points, one per camera
-    projection_matrices: (N, 3, 4) array of projection matrices
-
-    Returns the homogeneous 3D point (4,), normalised so the last entry is 1.
-    """
-    points_2d = np.asarray(points_2d, dtype=float)
-    projection_matrices = np.asarray(projection_matrices, dtype=float)
-
-    # Build the 2N x 4 system from the standard DLT projection constraints
-    rows = []
-    for (x, y), P in zip(points_2d, projection_matrices):
-        rows.append(x * P[2, :] - P[0, :])
-        rows.append(y * P[2, :] - P[1, :])
-    A = np.stack(rows, axis=0)
-
-    # Solution is the right singular vector with the smallest singular value
-    _, _, vh = np.linalg.svd(A)
-    X = vh[-1]
-    return X / X[-1]
-
-
 class CameraData:
     """Per-view camera intrinsics + extrinsics computed from project config.
 

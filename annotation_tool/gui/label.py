@@ -16,11 +16,10 @@ from annotation_tool.constants import (
     DEFAULT_BRIGHTNESS, DEFAULT_CONTRAST, DEFAULT_MARKER_SIZE,
 )
 from annotation_tool.camera.calibration import BasicCalibration
-from annotation_tool.camera.reconstruction import triangulate
+from annotation_tool.camera.geometry import clip_ray_to_aabb, triangulate
 from annotation_tool.gui.base import BaseAnnotationTool
 from annotation_tool.gui.utils import (
-    generate_label_colors, apply_contrast_brightness,
-    clip_ray_to_aabb, debounce,
+    generate_label_colors, apply_contrast_brightness, debounce,
 )
 
 

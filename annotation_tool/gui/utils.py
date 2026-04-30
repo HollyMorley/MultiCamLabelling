@@ -147,56 +147,6 @@ def apply_contrast_brightness(frame, contrast, brightness):
     return cv2.cvtColor(np.array(img_brightness), cv2.COLOR_RGB2BGR)
 
 
-def clip_ray_to_aabb(origin, direction, aabb):
-    """Clip a 3D ray to an axis-aligned bounding box (AABB) using the slab method.
-
-    The ray is parameterised as ``point(t) = origin + t * direction``. For each
-    world axis we find the t-values where the ray enters and exits the box's
-    slab on that axis; the ray is inside the box when it's inside all three
-    slabs simultaneously, so t_near = max(per-axis enters) and
-    t_far = min(per-axis exits). If t_near > t_far the ray misses the box.
-
-    origin, direction: array-likes with 3 entries.
-    aabb: dict with keys 'x', 'y', 'z' each mapping to [min, max].
-
-    Returns (point_near, point_far) as numpy arrays, or (None, None) if the
-    ray misses the box.
-    """
-    import numpy as np
-
-    origin = np.asarray(origin, dtype=float)
-    direction = np.asarray(direction, dtype=float)
-
-    t_enters: list[float] = []
-    t_exits: list[float] = []
-    for axis_idx, axis_name in enumerate(("x", "y", "z")):
-        a_min, a_max = aabb[axis_name]
-        d = direction[axis_idx]
-        if abs(d) < 1e-12:
-            # Ray is parallel to this axis: it's either always or never inside
-            # the slab. If origin is outside, the ray misses the box.
-            if origin[axis_idx] < a_min or origin[axis_idx] > a_max:
-                return None, None
-            continue  # this axis doesn't constrain t
-        t1 = (a_min - origin[axis_idx]) / d
-        t2 = (a_max - origin[axis_idx]) / d
-        if t1 > t2:
-            t1, t2 = t2, t1
-        t_enters.append(t1)
-        t_exits.append(t2)
-
-    if not t_enters:
-        # Ray parallel to every axis (degenerate): no segment to draw.
-        return None, None
-
-    t_near = max(t_enters)
-    t_far = min(t_exits)
-    if t_near > t_far:
-        return None, None  # ray misses the box
-
-    return origin + t_near * direction, origin + t_far * direction
-
-
 def debounce(wait):
     """Decorator that suppresses calls within `wait` seconds of the last call."""
     def decorator(fn):
