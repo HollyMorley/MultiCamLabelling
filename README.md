@@ -12,7 +12,7 @@ the DeepLabCut file convention so they can be fed directly into downstream DLC t
 </p>
 
 _Note: This is a personal research tool and under development (including these docs!). Future work will continue to
-focus on generalising the pipeline (and adding new UX features) so it can be released as a package._
+focus on generalising the pipeline (and adding new UX features) so it can be released as a package (e.g. see TODO.md)._
 
 ## Setup
 
