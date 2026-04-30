@@ -69,6 +69,14 @@ FIELD_HELP: dict[str, FieldHelp] = {
         short="Sanity check - must equal the number of views."
     ),
 
+    "framerate_fps": FieldHelp(
+        short="Camera frame rate in fps (e.g. 247).",
+        long=(
+            "The frame rate at which all cameras record. \n\n"
+            "All cameras must record at the same frame rate."
+        ),
+    ),
+
     "name": FieldHelp(
         short="Must match 'Experimenter' name in your DeepLabCut projects.",
         long=(

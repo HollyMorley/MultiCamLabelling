@@ -62,6 +62,10 @@ _OPTIONAL_TEMPLATES: dict[str, str] = {
         "#                                   # (e.g. doors). Treated like body parts during labelling.\n"
         "#   - <calibration_landmark_1>"
     ),
+    "framerate_fps": (
+        "# framerate_fps: <framerate>   "
+        "#                              "
+    ),
 }
 
 
@@ -93,6 +97,7 @@ class Project:
     optimisation_reference_labels: list[str] | None = None
     reference_label_weights: dict[str, float] | None = None
     movable_calibration_labels: list[str] | None = None
+    framerate_fps: float | None = None
     recordings: list[Recording] = field(default_factory=list)
     created: str | None = None
 
@@ -112,6 +117,7 @@ class Project:
         optimisation_reference_labels: list[str] | None = None,
         reference_label_weights: dict[str, float] | None = None,
         movable_calibration_labels: list[str] | None = None,
+        framerate_fps: float | None = None,
     ) -> "Project":
         """Create a new project on disk: makes the directory tree and writes
         project.yaml. Raises ValueError on invalid input or FileExistsError
@@ -151,6 +157,7 @@ class Project:
             optimisation_reference_labels=optimisation_reference_labels,
             reference_label_weights=reference_label_weights,
             movable_calibration_labels=movable_calibration_labels,
+            framerate_fps=framerate_fps,
             recordings=[],
             created=date.today().isoformat(),
         )
@@ -206,6 +213,7 @@ class Project:
             optimisation_reference_labels=data.get("optimisation_reference_labels"),
             reference_label_weights=data.get("reference_label_weights"),
             movable_calibration_labels=data.get("movable_calibration_labels"),
+            framerate_fps=data.get("framerate_fps"),
             recordings=recordings,
             created=data.get("created"),
         )
@@ -233,6 +241,7 @@ class Project:
             "optimisation_reference_labels": self.optimisation_reference_labels,
             "reference_label_weights": self.reference_label_weights,
             "movable_calibration_labels": self.movable_calibration_labels,
+            "framerate_fps": self.framerate_fps,
         }
         for field, value in optional_state.items():
             if value is not None:
@@ -345,6 +354,14 @@ class Project:
                 "Add the list of body-part names and reload the project."
             )
         return self.body_part_labels
+
+    def require_framerate_fps(self) -> float:
+        if not self.framerate_fps:
+            raise ValueError(
+                "project.yaml is missing 'framerate_fps'. "
+                "Add the camera frame rate (Hz) and reload the project."
+            )
+        return float(self.framerate_fps)
 
     def require_optimisation_config(self) -> tuple[list[str], dict[str, float]]:
         if not self.optimisation_reference_labels or not self.reference_label_weights:

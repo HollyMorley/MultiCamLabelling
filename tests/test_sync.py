@@ -7,9 +7,11 @@ pd = pytest.importorskip("pandas", reason="pandas required")
 
 from annotation_tool.gui.sync import match_frames_by_timestamp
 
-# Tolerance in match_frames_by_timestamp is hardcoded to ~4 ms (4.04e6 ns).
-STEP_NS = 1_000_000      # 1 ms between successive frames within a view
-LARGE_OFFSET = 10_000_000   # 10 ms — well outside tolerance
+# Step / tolerance chosen so consecutive frames sit well inside tolerance,
+# while LARGE_OFFSET sits well outside it.
+STEP_NS = 1_000_000           # 1 ms between successive frames within a view
+TOLERANCE_NS = 4_000_000      # 4 ms — accept consecutive single-frame jumps
+LARGE_OFFSET = 10_000_000     # 10 ms — well outside tolerance
 
 
 def _series(start, n, step=STEP_NS):
@@ -21,7 +23,9 @@ def _series(start, n, step=STEP_NS):
 
 def test_perfectly_aligned_three_views():
     ts = {v: _series(0, 5) for v in ["side", "front", "overhead"]}
-    matched = match_frames_by_timestamp(ts, "side", ["side", "front", "overhead"])
+    matched = match_frames_by_timestamp(
+        ts, "side", ["side", "front", "overhead"], TOLERANCE_NS,
+    )
     assert matched == [[i, i, i] for i in range(5)]
 
 
@@ -37,7 +41,7 @@ def test_dropped_frame_bridged_by_nearest_match():
 
     matched = match_frames_by_timestamp(
         {"side": side_ts, "front": front_ts, "overhead": overhead_ts},
-        "side", ["side", "front", "overhead"],
+        "side", ["side", "front", "overhead"], TOLERANCE_NS,
     )
 
     # Frames 0, 1 align directly across all three views. From frame 3
@@ -56,5 +60,5 @@ def test_more_than_three_views():
     Confirms the function isn't implicitly hardcoded to 3 cameras."""
     views = ["side", "front", "overhead", "rear", "bottom"]
     ts = {v: _series(0, 4) for v in views}
-    matched = match_frames_by_timestamp(ts, "side", views)
+    matched = match_frames_by_timestamp(ts, "side", views, TOLERANCE_NS)
     assert matched == [[i, i, i, i, i] for i in range(4)]

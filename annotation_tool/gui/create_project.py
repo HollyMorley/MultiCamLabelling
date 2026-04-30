@@ -94,6 +94,11 @@ class CreateProjectDialog:
             field_key="reference_label_weights",
         )
 
+        self.framerate_var = tk.StringVar()
+        self._add_text_row(
+            opt, "Frame rate (fps)", self.framerate_var, field_key="framerate_fps",
+        )
+
     def _add_text_row(self, parent, label, var, field_key=None):
         block = tk.Frame(parent)
         block.pack(fill=tk.X, padx=8, pady=(4, 0))
@@ -167,6 +172,16 @@ class CreateProjectDialog:
         return [line.strip() for line in raw.splitlines() if line.strip()] or None
 
     @staticmethod
+    def _parse_float(string_var):
+        raw = string_var.get().strip()
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            raise ValueError(f"Frame rate must be a number — got {raw!r}")
+
+    @staticmethod
     def _parse_weights(text_widget):
         raw = text_widget.get("1.0", tk.END).strip()
         if not raw:
@@ -221,6 +236,7 @@ class CreateProjectDialog:
             body_part_labels = self._parse_lines(self.bodyparts_text)
             optimisation_reference_labels = self._parse_lines(self.optref_text)
             reference_label_weights = self._parse_weights(self.weights_text)
+            framerate_fps = self._parse_float(self.framerate_var)
 
             project_dir = os.path.join(parent_dir, project_name)
             project = Project.create(
@@ -232,6 +248,7 @@ class CreateProjectDialog:
                 optimisation_reference_labels=optimisation_reference_labels,
                 reference_label_weights=reference_label_weights,
                 movable_calibration_labels=movable_calibration_labels,
+                framerate_fps=framerate_fps,
             )
         except (ValueError, FileExistsError, OSError) as e:
             messagebox.showerror("Cannot create project", str(e))
