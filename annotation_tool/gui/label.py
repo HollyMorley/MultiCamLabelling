@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.backend_bases import MouseButton
-from scipy.optimize import minimize
 
 from annotation_tool import paths
 from annotation_tool.constants import (
@@ -19,8 +18,9 @@ from annotation_tool.camera.calibration import InitialCalibration
 from annotation_tool.camera.geometry import (
     back_project_2d_to_3d, build_projection_matrix,
     camera_center_from_extrinsics, clip_ray_to_aabb,
-    project_3d_to_views, triangulate,
+    project_3d_to_views,
 )
+from annotation_tool.camera.optimisation import optimize_extrinsics
 from annotation_tool.gui.base import BaseAnnotationTool
 from annotation_tool.gui.utils import (
     generate_label_colors, apply_contrast_brightness, debounce,
@@ -674,146 +674,32 @@ class LabelFramesTool(BaseAnnotationTool):
     # ----- Calibration optimization -----
 
     def optimize_calibration(self):
-        reference_points, weights = self.project.require_optimisation_config()
-
-        initial_total_error, initial_errors = self.compute_reprojection_error(reference_points)
-        print(f"Initial total reprojection error: {initial_total_error}")
-        for label, views in initial_errors.items():
-            print(f"  {label}: {views}")
-
-        initial_flat_points = self.flatten_calibration_points()
-        bounds = [
-            (initial_flat_points[i] - 3.0, initial_flat_points[i] + 3.0)
-            for i in range(len(initial_flat_points))
-        ]
-
-        result = minimize(
-            self.objective_function, initial_flat_points,
-            args=(reference_points,), method="L-BFGS-B", bounds=bounds,
-            options={"maxiter": 15000, "ftol": 1e-8, "gtol": 1e-5, "disp": False},
+        """Refine camera extrinsics by minimising body-part reprojection
+        error. The math lives in camera/optimisation.py; this method
+        bridges GUI state in / out and prints/saves the result."""
+        result = optimize_extrinsics(
+            project=self.project,
+            body_part_labels_at_frame=self.body_part_points[self.current_frame_index],
+            calibration_points=self.calibration_points_static,
+            intrinsics=self.calibration_data["intrinsics"],
+            extrinsics=self.calibration_data["extrinsics"],
         )
 
-        optimized_points = self.reshape_calibration_points(result.x)
-        for label, views in optimized_points.items():
+        # Apply optimised positions back onto the GUI state
+        for label, views in result["optimized_calibration_points"].items():
             for view, point in views.items():
                 self.calibration_points_static[label][view] = point
+        self.calibration_data = result["calibration_data"]
 
-        self.recalculate_camera_parameters()
-
-        new_total_error, new_errors = self.compute_reprojection_error(reference_points)
-        print(f"Optimized total reprojection error: {new_total_error}")
-        for label, views in new_errors.items():
+        print(f"Initial total reprojection error: {result['initial_total_error']}")
+        for label, views in result["initial_errors"].items():
+            print(f"  {label}: {views}")
+        print(f"Optimized total reprojection error: {result['final_total_error']}")
+        for label, views in result["final_errors"].items():
             print(f"  {label}: {views}")
 
         self.save_optimized_calibration_points()
         self.update_calibration_labels_and_projection()
-
-    def compute_reprojection_error(self, labels, extrinsics=None, weighted=False):
-        errors = {label: {v: 0 for v in self.project.views} for label in labels}
-        total_error = 0
-
-        for label in labels:
-            point_3d = self.triangulate_point(label, extrinsics)
-            if point_3d is not None:
-                point_3d = point_3d[:3]
-                projections = self.project_to_view(point_3d, extrinsics)
-                for view in self.project.views:
-                    if self.body_part_points[self.current_frame_index][label][view] is not None:
-                        original_x, original_y = self.body_part_points[self.current_frame_index][label][view]
-                        if view in projections:
-                            projected_x, projected_y = projections[view]
-                            error = np.sqrt(
-                                (projected_x - original_x) ** 2
-                                + (projected_y - original_y) ** 2
-                            )
-                            if weighted:
-                                weight = (self.project.reference_label_weights or {}).get(label, 1.0)
-                                error *= weight
-                            errors[label][view] = error
-                            total_error += error
-        return total_error, errors
-
-    def triangulate_point(self, label, extrinsics=None):
-        if extrinsics is None:
-            extrinsics = self.calibration_data["extrinsics"]
-        intrinsics = self.calibration_data["intrinsics"]
-        P_list = []
-        coords = []
-        for view in self.project.views:
-            pt = self.body_part_points[self.current_frame_index][label][view]
-            if pt is not None:
-                e = extrinsics[view]
-                P_list.append(build_projection_matrix(intrinsics[view], e["rotm"], e["tvec"]))
-                coords.append(pt)
-
-        if len(P_list) < 2 or len(coords) < 2:
-            return None
-        return triangulate(np.array(coords), np.array(P_list))
-
-    def project_to_view(self, point_3d, extrinsics=None):
-        if extrinsics is None:
-            extrinsics = self.calibration_data["extrinsics"]
-        return project_3d_to_views(
-            point_3d, extrinsics, self.calibration_data["intrinsics"], self.project.views,
-        )
-
-    def flatten_calibration_points(self):
-        flat_points = []
-        for label in self.calibration_labels:
-            for view in self.project.views:
-                if self.calibration_points_static[label][view] is not None:
-                    flat_points.extend(self.calibration_points_static[label][view])
-        return np.array(flat_points, dtype=float)
-
-    def reshape_calibration_points(self, flat_points):
-        calibration_points = {
-            label: {v: None for v in self.project.views}
-            for label in self.calibration_labels
-        }
-        i = 0
-        for label in self.calibration_labels:
-            for view in self.project.views:
-                if self.calibration_points_static[label][view] is not None:
-                    calibration_points[label][view] = [flat_points[i], flat_points[i + 1]]
-                    i += 2
-        return calibration_points
-
-    def objective_function(self, flat_points, *args):
-        reference_points = args[0]
-        calibration_points = self.reshape_calibration_points(flat_points)
-        temp_extrinsics = self.estimate_extrinsics(calibration_points)
-        total_error, _ = self.compute_reprojection_error(
-            reference_points, temp_extrinsics, weighted=True
-        )
-        return total_error
-
-    def estimate_extrinsics(self, calibration_points):
-        calibration_coordinates = pd.DataFrame([
-            {
-                "bodyparts": label, "coords": coord,
-                **{v: calibration_points[label][v][i] for v in self.project.views},
-            }
-            for label in calibration_points
-            for i, coord in enumerate(["x", "y"])
-        ])
-        calib = InitialCalibration(calibration_coordinates, self.project)
-        return calib.estimate_cams_pose()
-
-    def recalculate_camera_parameters(self):
-        calibration_coordinates = pd.DataFrame([
-            {
-                "bodyparts": label, "coords": coord,
-                **{v: self.calibration_points_static[label][v][i] for v in self.project.views},
-            }
-            for label in self.calibration_points_static
-            for i, coord in enumerate(["x", "y"])
-        ])
-        calib = InitialCalibration(calibration_coordinates, self.project)
-        cameras_extrinsics = calib.estimate_cams_pose()
-        self.calibration_data = {
-            "extrinsics": cameras_extrinsics,
-            "intrinsics": calib.cameras_intrinsics,
-        }
 
     def save_optimized_calibration_points(self):
         calibration_path = paths.calibration_csv_enhanced(self.project, self.recording)
