@@ -28,4 +28,4 @@ features; not strictly prioritised.
   some of the base-class scaffolding but in limited scope (no labelling).
 - Generalise the multi-view layout. Equal-height stacked rows won't suit
   every setup where view counts and aspect ratios will vary.
-
+- Add more comprehensive test coverage.
