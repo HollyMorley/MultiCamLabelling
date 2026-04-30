@@ -250,7 +250,7 @@ class LabelFramesTool(BaseAnnotationTool):
             label_button.pack(fill=tk.X, pady=1)
             self.label_buttons.append(label_button)
 
-        self.current_label.set("Nose")
+        self.current_label.set(self.body_part_labels[0])
         self.update_label_button_selection()
 
         # Canvas
@@ -318,7 +318,7 @@ class LabelFramesTool(BaseAnnotationTool):
         self.show_body_part_points()
         self.canvas.draw()
 
-        self.current_label.set("Nose")
+        self.current_label.set(self.body_part_labels[0])
         self.update_label_button_selection()
 
     def refresh_display(self):
@@ -501,7 +501,7 @@ class LabelFramesTool(BaseAnnotationTool):
             text=f"Frame: {self.current_frame_index + 1}/{len(self.matched_frames)}"
         )
         self.display_frame()
-        self.current_label.set("Nose")
+        self.current_label.set(self.body_part_labels[0])
 
     def on_label_select(self, label):
         self.current_label.set(label)
