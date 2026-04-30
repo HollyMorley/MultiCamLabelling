@@ -77,6 +77,10 @@ class CreateProjectDialog:
             opt, "Calibration labels (one per line)", height=4,
             field_key="calibration_labels",
         )
+        self.movable_calib_text = self._add_textarea(
+            opt, "Movable calibration labels (one per line)", height=2,
+            field_key="movable_calibration_labels",
+        )
         self.bodyparts_text = self._add_textarea(
             opt, "Body part labels (one per line)", height=6,
             field_key="body_part_labels",
@@ -213,6 +217,7 @@ class CreateProjectDialog:
                 )
 
             calibration_labels = self._parse_lines(self.calibration_text)
+            movable_calibration_labels = self._parse_lines(self.movable_calib_text)
             body_part_labels = self._parse_lines(self.bodyparts_text)
             optimisation_reference_labels = self._parse_lines(self.optref_text)
             reference_label_weights = self._parse_weights(self.weights_text)
@@ -226,6 +231,7 @@ class CreateProjectDialog:
                 body_part_labels=body_part_labels,
                 optimisation_reference_labels=optimisation_reference_labels,
                 reference_label_weights=reference_label_weights,
+                movable_calibration_labels=movable_calibration_labels,
             )
         except (ValueError, FileExistsError, OSError) as e:
             messagebox.showerror("Cannot create project", str(e))

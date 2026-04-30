@@ -57,6 +57,11 @@ _OPTIONAL_TEMPLATES: dict[str, str] = {
         "# reference_label_weights:          # required by Label > Optimize Calibration. Weight per label (default 1.0).\n"
         "#   <body_part_1>: 1.0"
     ),
+    "movable_calibration_labels": (
+        "# movable_calibration_labels:       # optional. Subset of calibration_labels whose position changes per frame\n"
+        "#                                   # (e.g. doors). Treated like body parts during labelling.\n"
+        "#   - <calibration_landmark_1>"
+    ),
 }
 
 
@@ -87,6 +92,7 @@ class Project:
     body_part_labels: list[str] | None = None
     optimisation_reference_labels: list[str] | None = None
     reference_label_weights: dict[str, float] | None = None
+    movable_calibration_labels: list[str] | None = None
     recordings: list[Recording] = field(default_factory=list)
     created: str | None = None
 
@@ -105,6 +111,7 @@ class Project:
         body_part_labels: list[str] | None = None,
         optimisation_reference_labels: list[str] | None = None,
         reference_label_weights: dict[str, float] | None = None,
+        movable_calibration_labels: list[str] | None = None,
     ) -> "Project":
         """Create a new project on disk: makes the directory tree and writes
         project.yaml. Raises ValueError on invalid input or FileExistsError
@@ -143,6 +150,7 @@ class Project:
             body_part_labels=body_part_labels,
             optimisation_reference_labels=optimisation_reference_labels,
             reference_label_weights=reference_label_weights,
+            movable_calibration_labels=movable_calibration_labels,
             recordings=[],
             created=date.today().isoformat(),
         )
@@ -197,6 +205,7 @@ class Project:
             body_part_labels=data.get("body_part_labels"),
             optimisation_reference_labels=data.get("optimisation_reference_labels"),
             reference_label_weights=data.get("reference_label_weights"),
+            movable_calibration_labels=data.get("movable_calibration_labels"),
             recordings=recordings,
             created=data.get("created"),
         )
@@ -223,6 +232,7 @@ class Project:
             "body_part_labels": self.body_part_labels,
             "optimisation_reference_labels": self.optimisation_reference_labels,
             "reference_label_weights": self.reference_label_weights,
+            "movable_calibration_labels": self.movable_calibration_labels,
         }
         for field, value in optional_state.items():
             if value is not None:

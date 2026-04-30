@@ -29,6 +29,10 @@ class LabelFramesTool(BaseAnnotationTool):
         super().__init__(root, main_tool, project, recording)
         self.body_part_labels = project.require_body_part_labels()
         self.calibration_labels = project.require_calibration_labels()
+        # Subset of calibration_labels whose position varies per frame (e.g.
+        # doors). Treated like body parts during labelling — placeable, draggable,
+        # and not auto-propagated across frames. Optional; default is empty.
+        self.movable_calibration_labels = project.movable_calibration_labels or []
 
         self.extracted_frames_path = {}
         self.calibration_data = None
@@ -240,7 +244,7 @@ class LabelFramesTool(BaseAnnotationTool):
 
         for label in self.labels:
             color = self.label_colors[label]
-            if label != "Door" and label in self.calibration_labels:
+            if label in self.calibration_labels and label not in self.movable_calibration_labels:
                 continue
             label_button = tk.Radiobutton(
                 self.label_frame_widget, text=label, variable=self.current_label,
@@ -420,7 +424,7 @@ class LabelFramesTool(BaseAnnotationTool):
             if event.key == "shift":
                 self.delete_closest_point(ax, event, frame_points)
             else:
-                if label == "Door" or label not in self.calibration_labels:
+                if label in self.movable_calibration_labels or label not in self.calibration_labels:
                     frame_points[label][view] = (event.xdata, event.ydata)
                     ax.scatter(event.xdata, event.ydata, c=color, s=marker_size * 10,
                                label=label)
@@ -428,7 +432,7 @@ class LabelFramesTool(BaseAnnotationTool):
                     self.advance_label()
                     self.draw_reprojected_points()
         elif event.button == MouseButton.LEFT:
-            if label == "Door" or label not in self.calibration_labels:
+            if label in self.movable_calibration_labels or label not in self.calibration_labels:
                 self.dragging_point = self.find_closest_point(ax, event, frame_points)
 
     def on_drag(self, event):
@@ -479,7 +483,8 @@ class LabelFramesTool(BaseAnnotationTool):
                         closest_view = view
 
         if closest_label and closest_view:
-            if closest_label == "Door" or closest_label not in self.calibration_labels:
+            if (closest_label in self.movable_calibration_labels
+                    or closest_label not in self.calibration_labels):
                 frame_points[closest_label][closest_view] = None
                 self.display_frame()
 
@@ -692,7 +697,7 @@ class LabelFramesTool(BaseAnnotationTool):
                     if len(x_vals) > 0 and len(y_vals) > 0:
                         x, y = x_vals[0], y_vals[0]
                         self.calibration_points_static[label][view] = (x, y)
-                        if label != "Door":
+                        if label not in self.movable_calibration_labels:
                             for frame in self.body_part_points.keys():
                                 self.body_part_points[frame][label][view] = (x, y)
                     else:

@@ -1,12 +1,12 @@
 """Help text for project / field-level concepts.
 
-Single source of truth — used by:
+Single source of truth - used by:
   - the Create Project dialog (inline hints + "?" popups)
   - any future field-editing UIs
 
 Each entry has:
-  short — one-line hint shown under the field in the GUI
-  long  — multi-paragraph explanation shown in the "?" popup
+  short - one-line hint shown under the field in the GUI
+  long  - multi-paragraph explanation shown in the "?" popup
 """
 
 from dataclasses import dataclass
@@ -26,7 +26,7 @@ class FieldHelp:
 FIELD_HELP: dict[str, FieldHelp] = {
 
     "project_name": FieldHelp(
-        short="Short identifier — used as the project folder name.",
+        short="Short identifier - used as the project folder name.",
         long=(
             "A name for this project. Used as the directory name created "
             "under the chosen project root, and recorded in project.yaml.\n\n"
@@ -46,7 +46,7 @@ FIELD_HELP: dict[str, FieldHelp] = {
         long=(
             "One name per camera. These names must appear as a segment in "
             "your video filenames (e.g. 'Demo_session1_side.avi' contains "
-            "'side') — Add Videos can then auto-detect which view a "
+            "'side') - Add Videos can then auto-detect which view a "
             "picked file belongs to.\n\n"
         ),
     ),
@@ -91,7 +91,7 @@ FIELD_HELP: dict[str, FieldHelp] = {
             "world axes (x, y, and z). If they're roughly co-planar, the "
             "calibration solver is underdetermined and the resulting 3D "
             "reconstruction will be unstable or wrong. An ideal setup uses "
-            "6+ well-distributed landmarks — e.g. corners of a known "
+            "6+ well-distributed landmarks - e.g. corners of a known "
             "platform plus a couple of points clearly above or below it.\n\n"
             "One label per line."
         ),
@@ -102,12 +102,16 @@ FIELD_HELP: dict[str, FieldHelp] = {
               "One label per line.",
         long=(
             "The body parts you will manually annotate on each extracted "
-            "frame. Order matters — it determines the cycling order in "
-            "the labelling tool, which affects how fast you can label.\n\n"
+            "frame. Order matters - it determines the cycling order in "
+            "the labelling tool, which affects how fast you can label. "
+            "The first entry is the default selected label when the tool "
+            "opens.\n\n"
             "Calibration_labels should also be included here and "
-            "are handled specially — they get pre-populated from the "
-            "calibration data. Any calibration annotations which are not fully"
-            "static (e.g. a door) can be adjusted during labelling.\n\n"
+            "are handled specially - they get pre-populated from the "
+            "calibration data. Calibration labels whose position is not "
+            "fixed across frames (e.g. a door) should additionally be "
+            "listed under movable_calibration_labels so they can be "
+            "adjusted per frame during labelling.\n\n"
             "One label per line."
         ),
     ),
@@ -121,10 +125,27 @@ FIELD_HELP: dict[str, FieldHelp] = {
             "camera's pose to minimise the reprojection error of these "
             "reference body parts across views.\n\n"
             "Pick stable, easy-to-identify body parts that you can label "
-            "reliably and that are visible in most or all views — e.g. "
+            "reliably and that are visible in most or all views - e.g. "
             "joints rather than amorphous body sections, distinct points rather"
             "than midline approximations.\n\n"
             "Must be a subset of body_part_labels. One label per line."
+        ),
+    ),
+
+    "movable_calibration_labels": FieldHelp(
+        short="Optional. Calibration labels whose position changes per "
+              "frame (e.g. a door). One label per line.",
+        long=(
+            "Most calibration landmarks are fixed structures - once "
+            "labelled in the Calibrate step, the tool propagates their "
+            "positions across every frame in the Label step. Any "
+            "calibration label that *moves* between frames (e.g. a door "
+            "that opens and closes) belongs here.\n\n"
+            "Labels listed here are still used for camera pose estimation "
+            "during Calibrate, but during Label they behave like body "
+            "parts - placeable, draggable, and not auto-propagated.\n\n"
+            "Must be a subset of calibration_labels. Optional - leave "
+            "empty if every calibration landmark is fixed."
         ),
     ),
 
