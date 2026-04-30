@@ -46,7 +46,7 @@ config plus all the videos, extracted frames, calibration data, and labels for t
 ### 1. Create or load a project
 
 <p align="center">
-  <img src="docs/Homepage.png" alt="Home screen" width="35%">
+  <img src="docs/homepage.png" alt="Home screen" width="35%">
 </p>
 
 Pick a name, list your camera views, define calibration and body-part labels. Optional fields can
