@@ -2,93 +2,63 @@
 
 import os
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import messagebox
 
 import cv2
 import numpy as np
 import pandas as pd
 from matplotlib.backend_bases import MouseButton
 
-from annotation_tool.config import (
-    CALIBRATION_LABELS, CALIBRATION_SAVE_PATH_TEMPLATE,
-    DEFAULT_CALIBRATION_FILE_PATH, REFERENCE_VIEW, VIEWS,
-)
+from annotation_tool import paths
 from annotation_tool.gui.base import BaseAnnotationTool
-from annotation_tool.gui.utils import (
-    parse_video_path, get_corresponding_video_path,
-    generate_label_colors, view_index,
-)
+from annotation_tool.gui.utils import generate_label_colors
 from annotation_tool.gui.sync import (
-    load_timestamps, zero_timestamps, adjust_timestamps, match_frames_by_timestamp,
+    zero_timestamps, adjust_timestamps, match_frames_by_timestamp,
 )
 
 
 class CalibrateCamerasTool(BaseAnnotationTool):
-    def __init__(self, root, main_tool):
-        super().__init__(root, main_tool)
-        self.video_path = ""
-        self.video_name = ""
-        self.video_date = ""
-        self.camera_view = ""
+    def __init__(self, root, main_tool, project, recording):
+        super().__init__(root, main_tool, project, recording)
         self.caps = {}
         self.total_frames = 0
         self.mode = "calibration"
 
-        self.calibration_points_static = {}
-        self.labels = CALIBRATION_LABELS
+        self.labels = self.project.require_calibration_labels()
+        self.calibration_points_static = {
+            label: {v: None for v in self.project.views}
+            for label in self.labels
+        }
         self.label_colors = generate_label_colors(self.labels)
         self.current_label = tk.StringVar(value=self.labels[0])
 
-        self.calibrate_cameras_menu()
+        self._setup()
 
-    def calibrate_cameras_menu(self):
+    def _setup(self):
         self.main_tool.clear_root()
 
-        self.video_path = filedialog.askopenfilename(
-            title=f"Select {REFERENCE_VIEW.capitalize()} Video File"
-        )
-        if not self.video_path:
-            self.main_tool.main_menu()
-            return
+        views = self.project.views
+        ref = self.project.reference_view
 
-        self.video_name, self.video_date, self.camera_view = parse_video_path(self.video_path)
-        if self.camera_view != REFERENCE_VIEW:
-            messagebox.showerror(
-                "Wrong Camera View",
-                f"Please select the {REFERENCE_VIEW} video (the reference view "
-                f"configured in config.REFERENCE_VIEW). You picked the "
-                f"{self.camera_view} video.",
-            )
-            self.main_tool.main_menu()
-            return
-
-        self.caps[REFERENCE_VIEW] = cv2.VideoCapture(self.video_path)
-        for view in VIEWS:
-            if view != REFERENCE_VIEW:
-                self.caps[view] = cv2.VideoCapture(
-                    get_corresponding_video_path(self.video_path, self.camera_view, view)
-                )
-        self.total_frames = int(self.caps[REFERENCE_VIEW].get(cv2.CAP_PROP_FRAME_COUNT))
+        for view in views:
+            self.caps[view] = cv2.VideoCapture(paths.video_path(self.project, self.recording, view))
+        self.total_frames = int(self.caps[ref].get(cv2.CAP_PROP_FRAME_COUNT))
         self.current_frame_index = 0
 
-        # Load and synchronize timestamps. Reference view anchors the merge;
-        # other views are linearly adjusted to align with it.
-        timestamps = {
-            v: zero_timestamps(load_timestamps(self.video_path, self.video_name, v))
-            for v in VIEWS
-        }
-        ts_adj = {REFERENCE_VIEW: timestamps[REFERENCE_VIEW]["Timestamp"].astype(float)}
-        for v in VIEWS:
-            if v != REFERENCE_VIEW:
-                ts_adj[v] = adjust_timestamps(timestamps[REFERENCE_VIEW], timestamps[v])
+        # Load and synchronise timestamps.
+        timestamps = {}
+        for v in views:
+            ts_path = paths.timestamps_path(self.project, self.recording, v)
+            timestamps[v] = zero_timestamps(paths.load_timestamps_csv(ts_path))
+        ts_adj = {ref: timestamps[ref]["Timestamp"].astype(float)}
+        for v in views:
+            if v != ref:
+                ts_adj[v] = adjust_timestamps(timestamps[ref], timestamps[v])
 
-        self.matched_frames = match_frames_by_timestamp(ts_adj, REFERENCE_VIEW, VIEWS)
+        self.matched_frames = match_frames_by_timestamp(ts_adj, ref, views)
 
-        self.calibration_file_path = CALIBRATION_SAVE_PATH_TEMPLATE.format(
-            video_name=self.video_name
-        )
-        enhanced_calibration_file = self.calibration_file_path.replace(".csv", "_enhanced.csv")
-        default_calibration_file = DEFAULT_CALIBRATION_FILE_PATH
+        self.calibration_file_path = paths.calibration_csv(self.project, self.recording)
+        enhanced_calibration_file = paths.calibration_csv_enhanced(self.project, self.recording)
 
         # Build UI
         main_frame = tk.Frame(self.root)
@@ -121,8 +91,8 @@ class CalibrateCamerasTool(BaseAnnotationTool):
         tk.Button(button_frame, text="Home", command=self.reset_view).pack(pady=5)
         tk.Button(button_frame, text="Save Calibration Points",
                   command=self.save_calibration_points).pack(pady=5)
-        tk.Button(button_frame, text="Back to Main Menu",
-                  command=self.main_tool.main_menu).pack(pady=5)
+        tk.Button(button_frame, text="Back",
+                  command=self.main_tool.go_project_view).pack(pady=5)
 
         # Label selector
         control_frame_right = tk.Frame(main_frame)
@@ -138,7 +108,7 @@ class CalibrateCamerasTool(BaseAnnotationTool):
                 value=label, indicatoron=0, width=20,
             ).pack(side=tk.LEFT)
 
-        for view in VIEWS:
+        for view in views:
             tk.Radiobutton(
                 control_frame_right, text=view.capitalize(),
                 variable=self.current_view, value=view,
@@ -147,53 +117,28 @@ class CalibrateCamerasTool(BaseAnnotationTool):
         self.create_3panel_canvas(main_frame)
         self.connect_mouse_events()
 
-        self.calibration_points_static = {
-            label: {v: None for v in VIEWS}
-            for label in self.labels
-        }
-
         # Load existing calibration if available
         if os.path.exists(enhanced_calibration_file):
             self.load_calibration_points(enhanced_calibration_file)
         elif os.path.exists(self.calibration_file_path):
-            response = messagebox.askyesnocancel(
+            if messagebox.askyesno(
                 "Calibration Found",
-                "Calibration labels found. Do you want to load them? "
-                "(Yes to load current, No to load default, Cancel to skip)",
-            )
-            if response is None:
-                pass
-            elif response:
+                "Calibration labels found for this recording. Load them?",
+            ):
                 self.load_calibration_points(self.calibration_file_path)
-            else:
-                if os.path.exists(default_calibration_file):
-                    self.load_calibration_points(default_calibration_file)
-                else:
-                    messagebox.showinfo("Default Calibration Not Found",
-                                        "Default calibration file not found.")
-        else:
-            if os.path.exists(default_calibration_file):
-                if messagebox.askyesno(
-                    "Default Calibration",
-                    "No specific calibration file found. Load default calibration labels?",
-                ):
-                    self.load_calibration_points(default_calibration_file)
-            else:
-                messagebox.showinfo("Default Calibration Not Found",
-                                    "Default calibration file not found.")
 
         self.show_frames()
 
     def load_calibration_points(self, file_path):
         try:
-            df = pd.read_csv(file_path)
+            df = paths.load_calibration_csv(file_path)
             df.set_index(["bodyparts", "coords"], inplace=True)
             for label in df.index.levels[0]:
-                for view in VIEWS:
+                for view in self.project.views:
                     if not pd.isna(df.loc[(label, "x"), view]):
                         x, y = df.loc[(label, "x"), view], df.loc[(label, "y"), view]
                         self.calibration_points_static[label][view] = self.axs[
-                            view_index(view)
+                            self.project.views.index(view)
                         ].scatter(
                             x, y, c=self.label_colors[label],
                             s=self.marker_size_var.get() * 10, label=label,
@@ -219,9 +164,10 @@ class CalibrateCamerasTool(BaseAnnotationTool):
         frame_number = self.current_frame_index
         self.frame_label.config(text=f"Frame: {frame_number}/{len(self.matched_frames) - 1}")
 
-        frame_nums = dict(zip(VIEWS, self.matched_frames[frame_number]))
+        views = self.project.views
+        frame_nums = dict(zip(views, self.matched_frames[frame_number]))
         imgs = {}
-        for view in VIEWS:
+        for view in views:
             self.caps[view].set(cv2.CAP_PROP_POS_FRAMES, frame_nums[view])
             ret, img = self.caps[view].read()
             if not ret:
@@ -239,25 +185,22 @@ class CalibrateCamerasTool(BaseAnnotationTool):
         for label, points in self.calibration_points_static.items():
             for view, point in points.items():
                 if point is not None:
-                    ax = self.axs[view_index(view)]
+                    ax = self.axs[self.project.views.index(view)]
                     ax.add_collection(point)
                     point.set_sizes([self.marker_size_var.get() * 10])
         self.canvas.draw()
 
     def save_calibration_points(self):
-        calibration_path = CALIBRATION_SAVE_PATH_TEMPLATE.format(
-            video_name=self.video_name
-        )
-        os.makedirs(os.path.dirname(calibration_path), exist_ok=True)
+        calibration_path = paths.calibration_csv(self.project, self.recording)
 
         data = {"bodyparts": [], "coords": []}
-        for v in VIEWS:
+        for v in self.project.views:
             data[v] = []
         for label, coords in self.calibration_points_static.items():
             for coord in ["x", "y"]:
                 data["bodyparts"].append(label)
                 data["coords"].append(coord)
-                for view in VIEWS:
+                for view in self.project.views:
                     if coords[view] is not None:
                         x, y = coords[view].get_offsets()[0]
                         data[view].append(x if coord == "x" else y)
@@ -265,7 +208,7 @@ class CalibrateCamerasTool(BaseAnnotationTool):
                         data[view].append(None)
 
         df = pd.DataFrame(data)
-        df.to_csv(calibration_path, index=False)
+        paths.save_calibration_csv(df, calibration_path)
         messagebox.showinfo("Info", "Calibration points saved successfully")
 
     # ----- Mouse interaction -----
@@ -275,7 +218,7 @@ class CalibrateCamerasTool(BaseAnnotationTool):
             return
 
         view = self.current_view.get()
-        ax = self.axs[view_index(view)]
+        ax = self.axs[self.project.views.index(view)]
         color = self.label_colors[self.current_label.get()]
         marker_size = self.marker_size_var.get()
 

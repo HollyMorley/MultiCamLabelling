@@ -1,43 +1,76 @@
-"""Main application window with tool selection menu."""
+"""
+Main application — top-level state machine.
+"""
 
-import tkinter as tk
+from annotation_tool.project import Project
 
 
 class MainTool:
     def __init__(self, root):
         self.root = root
-        self.root.title("Body Parts Labeling Tool")
+        self.root.title("3D Annotation GUI")
         self.screen_width = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
-        self.main_menu()
+        self.project: Project | None = None
+        self.go_home()
 
-    def main_menu(self):
-        self.clear_root()
-        main_frame = tk.Frame(self.root)
-        main_frame.pack(pady=20, padx=30)
-
-        tk.Button(main_frame, text="Extract Frames from Videos",
-                  command=self.extract_frames_menu).pack(pady=5)
-        tk.Button(main_frame, text="Calibrate Camera Positions",
-                  command=self.calibrate_cameras_menu).pack(pady=5)
-        tk.Button(main_frame, text="Label Frames",
-                  command=self.label_frames_menu).pack(pady=5)
+    # ----- Helpers -----
 
     def clear_root(self):
         for widget in self.root.winfo_children():
             widget.destroy()
 
-    def extract_frames_menu(self):
+    # ----- Navigation -----
+
+    def go_home(self):
+        from annotation_tool.gui.home import HomeScreen
+        self.clear_root()
+        HomeScreen(self.root, self)
+
+    def go_create_project(self):
+        from annotation_tool.gui.create_project import CreateProjectDialog
+        CreateProjectDialog(self.root, self)
+
+    def load_project(self, dir):
+        self.project = Project.load(dir)
+        self.go_project_view()
+
+    def go_project_view(self):
+        from annotation_tool.gui.project_view import ProjectView
+        if self.project is None:
+            self.go_home()
+            return
+        self.clear_root()
+        ProjectView(self.root, self, self.project)
+
+    def go_add_videos(self):
+        from annotation_tool.gui.add_videos import AddVideosScreen
+        if self.project is None:
+            self.go_home()
+            return
+        self.clear_root()
+        AddVideosScreen(self.root, self, self.project)
+
+    def go_extract(self, recording):
         from annotation_tool.gui.extract import ExtractFramesTool
+        if self.project is None:
+            self.go_home()
+            return
         self.clear_root()
-        ExtractFramesTool(self.root, self)
+        ExtractFramesTool(self.root, self, self.project, recording)
 
-    def calibrate_cameras_menu(self):
+    def go_calibrate(self, recording):
         from annotation_tool.gui.calibrate import CalibrateCamerasTool
+        if self.project is None:
+            self.go_home()
+            return
         self.clear_root()
-        CalibrateCamerasTool(self.root, self)
+        CalibrateCamerasTool(self.root, self, self.project, recording)
 
-    def label_frames_menu(self):
+    def go_label(self, recording):
         from annotation_tool.gui.label import LabelFramesTool
+        if self.project is None:
+            self.go_home()
+            return
         self.clear_root()
-        LabelFramesTool(self.root, self)
+        LabelFramesTool(self.root, self, self.project, recording)

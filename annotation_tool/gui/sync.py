@@ -1,19 +1,8 @@
 """Timestamp synchronization and frame matching across multiple cameras."""
 
-import os
-
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
-
-
-def load_timestamps(video_path, video_name, view):
-    """Load timestamps CSV for a given camera view."""
-    video_name_base = "_".join(video_name.split("_")[:-1])
-    video_number = video_name.split("_")[-1]
-    timestamp_file = video_name_base + f"_{view}_{video_number}_Timestamps.csv"
-    timestamp_path = os.path.join(os.path.dirname(video_path), timestamp_file)
-    return pd.read_csv(timestamp_path)
 
 
 def zero_timestamps(timestamps):

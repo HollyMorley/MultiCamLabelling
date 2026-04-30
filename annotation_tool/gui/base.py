@@ -6,27 +6,32 @@ import cv2
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-from annotation_tool.config import (
+from annotation_tool.constants import (
     BRIGHTNESS_STEP, CONTRAST_STEP, DEFAULT_BRIGHTNESS, DEFAULT_CONTRAST,
     DEFAULT_MARKER_SIZE, MARKER_SIZE_STEP, MAX_BRIGHTNESS, MAX_CONTRAST,
     MAX_MARKER_SIZE, MIN_BRIGHTNESS, MIN_CONTRAST, MIN_MARKER_SIZE,
-    REFERENCE_VIEW, VIEWS,
 )
-from annotation_tool.gui.utils import view_index, apply_contrast_brightness
+from annotation_tool.gui.utils import apply_contrast_brightness
 
 
 class BaseAnnotationTool:
     """Shared state, UI setup and mouse handling for the calibration and
     body-part labelling tools. Subclasses must implement refresh_display,
-    on_click, on_drag, and skip_frames."""
+    on_click, on_drag, and skip_frames.
 
-    def __init__(self, root, main_tool):
+    `project` provides view ordering (project.views) and the reference view
+    (project.reference_view) — replacing the old module-level VIEWS/REFERENCE_VIEW.
+    """
+
+    def __init__(self, root, main_tool, project, recording):
         self.root = root
         self.main_tool = main_tool
+        self.project = project
+        self.recording = recording
         self.contrast_var = tk.DoubleVar(value=DEFAULT_CONTRAST)
         self.brightness_var = tk.DoubleVar(value=DEFAULT_BRIGHTNESS)
         self.marker_size_var = tk.DoubleVar(value=DEFAULT_MARKER_SIZE)
-        self.current_view = tk.StringVar(value=REFERENCE_VIEW)
+        self.current_view = tk.StringVar(value=project.reference_view)
         self.crosshair_lines = []
         self.dragging_point = None
         self.panning = False
@@ -67,8 +72,11 @@ class BaseAnnotationTool:
         return settings_frame
 
     def create_3panel_canvas(self, parent, figsize=(10, 12)):
-        """Create a 3-row matplotlib figure embedded in tkinter."""
-        self.fig, self.axs = plt.subplots(3, 1, figsize=figsize)
+        """Create an N-row matplotlib figure embedded in tkinter, with one row
+        per view in self.project.views."""
+        self.fig, axs = plt.subplots(len(self.project.views), 1, figsize=figsize)
+        # plt.subplots returns a single Axes (not array) when there's only one row.
+        self.axs = list(axs) if hasattr(axs, "__len__") else [axs]
         self.canvas = FigureCanvasTkAgg(self.fig, master=parent)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -97,12 +105,12 @@ class BaseAnnotationTool:
         """Clear axes and display each view's BGR frame with contrast/brightness applied.
 
         frames_by_view: dict mapping view name -> BGR image. Views are rendered
-        in the canonical order defined by VIEWS.
+        in the canonical order defined by self.project.views.
         """
         contrast = self.contrast_var.get()
         brightness = self.brightness_var.get()
 
-        for ax, view in zip(self.axs, VIEWS):
+        for ax, view in zip(self.axs, self.project.views):
             adjusted = apply_contrast_brightness(frames_by_view[view], contrast, brightness)
             ax.cla()
             ax.imshow(cv2.cvtColor(adjusted, cv2.COLOR_BGR2RGB))
@@ -110,7 +118,7 @@ class BaseAnnotationTool:
 
     def on_scroll(self, event):
         if event.inaxes:
-            ax = self.axs[view_index(self.current_view.get())]
+            ax = self.axs[self.project.views.index(self.current_view.get())]
             xlim = ax.get_xlim()
             ylim = ax.get_ylim()
             xdata, ydata = event.xdata, event.ydata
@@ -135,7 +143,7 @@ class BaseAnnotationTool:
             dx = event.x - self.pan_start[0]
             dy = event.y - self.pan_start[1]
             self.pan_start = (event.x, event.y)
-            ax = self.axs[view_index(self.current_view.get())]
+            ax = self.axs[self.project.views.index(self.current_view.get())]
             xlim = ax.get_xlim()
             ylim = ax.get_ylim()
             scale_x = (xlim[1] - xlim[0]) / self.canvas.get_width_height()[0]

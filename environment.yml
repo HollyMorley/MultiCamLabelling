@@ -2,7 +2,7 @@ name: 3d-annotation-gui
 channels:
   - conda-forge
 dependencies:
-  - python>=3.11
+  - python>=3.11,<3.14
   - numpy>=2.0
   - opencv
   - pandas
@@ -12,4 +12,5 @@ dependencies:
   - scikit-learn
   - tk
   - pytables
+  - pyyaml
   - pytest

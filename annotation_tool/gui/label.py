@@ -2,8 +2,7 @@
 
 import os
 import tkinter as tk
-from tkinter import filedialog, messagebox
-from functools import lru_cache
+from tkinter import messagebox
 
 import cv2
 import numpy as np
@@ -12,47 +11,47 @@ from matplotlib import pyplot as plt
 from matplotlib.backend_bases import MouseButton
 from scipy.optimize import minimize
 
-from annotation_tool.config import (
-    BODY_PART_LABELS, CALIBRATION_LABELS, CALIBRATION_SAVE_PATH_TEMPLATE,
+from annotation_tool import paths
+from annotation_tool.constants import (
     DEFAULT_BRIGHTNESS, DEFAULT_CONTRAST, DEFAULT_MARKER_SIZE,
-    LABEL_SAVE_PATH_TEMPLATE, OPTIMIZATION_REFERENCE_LABELS,
-    REFERENCE_LABEL_WEIGHTS, REFERENCE_VIEW, VIEWS,
 )
 from annotation_tool.camera.calibration import BasicCalibration
 from annotation_tool.camera.reconstruction import triangulate
 from annotation_tool.gui.base import BaseAnnotationTool
 from annotation_tool.gui.utils import (
-    view_index, get_video_name_with_view, generate_label_colors,
-    apply_contrast_brightness, extract_date_from_folder_path,
+    generate_label_colors, apply_contrast_brightness,
     find_t_for_coordinate, get_line_equation, debounce,
 )
 
 
 class LabelFramesTool(BaseAnnotationTool):
-    def __init__(self, root, main_tool):
-        super().__init__(root, main_tool)
-        self.video_name = ""
-        self.video_date = ""
+    def __init__(self, root, main_tool, project, recording):
+        super().__init__(root, main_tool, project, recording)
+        self.body_part_labels = project.require_body_part_labels()
+        self.calibration_labels = project.require_calibration_labels()
+
         self.extracted_frames_path = {}
         self.calibration_data = None
-        self.labels = BODY_PART_LABELS
-        self.label_colors = generate_label_colors(self.labels, CALIBRATION_LABELS)
-        self.current_label = tk.StringVar(value="Nose")
-        self.projection_view = tk.StringVar(value=REFERENCE_VIEW)
+        # Existing code uses self.labels for the body-part labels list (it's
+        # later mutated in setup_labeling_ui); preserve that convention.
+        self.labels = list(self.body_part_labels)
+        self.label_colors = generate_label_colors(self.labels, self.calibration_labels)
+        self.current_label = tk.StringVar(value=self.labels[0] if self.labels else "")
+        self.projection_view = tk.StringVar(value=project.reference_view)
         self.body_part_points = {}
         self.calibration_points_static = {
-            label: {v: None for v in VIEWS}
-            for label in CALIBRATION_LABELS
+            label: {v: None for v in project.views}
+            for label in self.calibration_labels
         }
         self.cam_reprojected_points = {"near": {}, "far": {}}
-        self.frames = {v: [] for v in VIEWS}
-        self.projection_lines = {v: None for v in VIEWS}
+        self.frames = {v: [] for v in project.views}
+        self.projection_lines = {v: None for v in project.views}
         self.P = None
         self.tooltip = None
         self.label_buttons = []
         self.tooltip_window = None
-        self.frame_names = {v: [] for v in VIEWS}
-        self.frame_numbers = {v: [] for v in VIEWS}
+        self.frame_names = {v: [] for v in project.views}
+        self.frame_numbers = {v: [] for v in project.views}
 
         self.spacer_lines_active = False
         self.spacer_lines_points = []
@@ -65,40 +64,35 @@ class LabelFramesTool(BaseAnnotationTool):
     def label_frames_menu(self):
         self.main_tool.clear_root()
 
-        calibration_folder_path = filedialog.askdirectory(title="Select Calibration Folder")
-        if not calibration_folder_path:
-            self.main_tool.main_menu()
-            return
-
-        self.video_name = os.path.basename(calibration_folder_path)
-        self.video_date = extract_date_from_folder_path(calibration_folder_path)
-        self.calibration_file_path = os.path.join(
-            calibration_folder_path, "calibration_labels.csv"
-        )
-        enhanced_calibration_file = self.calibration_file_path.replace(".csv", "_enhanced.csv")
+        self.calibration_file_path = paths.calibration_csv(self.project, self.recording)
+        enhanced_calibration_file = paths.calibration_csv_enhanced(self.project, self.recording)
 
         if not os.path.exists(self.calibration_file_path) and not os.path.exists(enhanced_calibration_file):
-            messagebox.showerror("Error", "No corresponding camera calibration data found.")
+            messagebox.showerror(
+                "Error",
+                "No calibration found for this recording. Run Calibrate first.",
+            )
+            self.main_tool.go_project_view()
             return
 
-        base_path = os.path.dirname(os.path.dirname(calibration_folder_path))
-        video_names = {
-            view: get_video_name_with_view(self.video_name, view)
-            for view in VIEWS
-        }
+        # Bug fix: previously hardcoded "Side"/"Front"/"Overhead" segments;
+        # now driven by project.views via paths.frames_dir.
         self.extracted_frames_path = {
-            "side": os.path.normpath(os.path.join(base_path, "Side", video_names["side"])),
-            "front": os.path.normpath(os.path.join(base_path, "Front", video_names["front"])),
-            "overhead": os.path.normpath(os.path.join(base_path, "Overhead", video_names["overhead"])),
+            v: paths.frames_dir(self.project, self.recording, v)
+            for v in self.project.views
         }
 
         if not all(os.path.exists(p) for p in self.extracted_frames_path.values()):
-            messagebox.showerror("Error", "One or more extracted frames folders not found.")
+            messagebox.showerror(
+                "Error",
+                "One or more extracted-frames folders not found. Run Extract first.",
+            )
+            self.main_tool.go_project_view()
             return
 
         self.current_frame_index = 0
         self.show_loading_popup()
-        self.frames = {v: [] for v in VIEWS}
+        self.frames = {v: [] for v in self.project.views}
         self.root.after(100, self.load_frames, enhanced_calibration_file)
 
     def show_loading_popup(self):
@@ -111,7 +105,7 @@ class LabelFramesTool(BaseAnnotationTool):
     def load_frames(self, enhanced_calibration_file):
         valid_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tiff"}
 
-        for view in VIEWS:
+        for view in self.project.views:
             frame_files = sorted(
                 (f for f in os.listdir(self.extracted_frames_path[view])
                  if os.path.splitext(f)[1].lower() in valid_extensions),
@@ -126,13 +120,13 @@ class LabelFramesTool(BaseAnnotationTool):
                 image_number = int(os.path.splitext(file)[0].replace("img", ""))
                 self.frame_numbers[view].append(image_number)
 
-        min_frame_count = min(len(self.frames[v]) for v in VIEWS if self.frames[v])
-        for view in VIEWS:
+        min_frame_count = min(len(self.frames[v]) for v in self.project.views if self.frames[v])
+        for view in self.project.views:
             self.frames[view] = self.frames[view][:min_frame_count]
             self.frame_numbers[view] = self.frame_numbers[view][:min_frame_count]
 
         print("Frames loaded - " + ", ".join(
-            f"{v.capitalize()}: {len(self.frames[v])}" for v in VIEWS
+            f"{v.capitalize()}: {len(self.frames[v])}" for v in self.project.views
         ))
 
         if min_frame_count == 0:
@@ -143,23 +137,16 @@ class LabelFramesTool(BaseAnnotationTool):
         self.loading_popup.destroy()
 
         self.body_part_points = {
-            frame_idx: {label: {v: None for v in VIEWS} for label in self.labels}
+            frame_idx: {label: {v: None for v in self.project.views} for label in self.labels}
             for frame_idx in range(min_frame_count)
         }
 
-        self.matched_frames = [tuple(i for _ in VIEWS) for i in range(min_frame_count)]
+        self.matched_frames = [tuple(i for _ in self.project.views) for i in range(min_frame_count)]
 
         self.setup_labeling_ui()
 
-        video_names = {
-            view: os.path.basename(self.extracted_frames_path[view])
-            for view in VIEWS
-        }
-        for view in VIEWS:
-            label_file_path = os.path.join(
-                LABEL_SAVE_PATH_TEMPLATE[view].format(video_name=video_names[view]),
-                "CollectedData_Holly.csv",
-            )
+        for view in self.project.views:
+            label_file_path = paths.labels_csv(self.project, self.recording, view)
             if os.path.exists(label_file_path):
                 self.load_existing_labels(label_file_path, view)
 
@@ -206,19 +193,19 @@ class LabelFramesTool(BaseAnnotationTool):
                   command=self.optimize_calibration).pack(pady=5)
 
         # View selectors. self.current_view and self.projection_view are
-        # already initialized in __init__ (to REFERENCE_VIEW); the radio
+        # already initialized in __init__ (to project.reference_view); the radio
         # buttons bind to those existing StringVars.
         view_frame = tk.Frame(control_frame)
         view_frame.pack(side=tk.RIGHT, padx=10, pady=5)
         tk.Label(view_frame, text="Label View").pack()
-        for view in VIEWS:
+        for view in self.project.views:
             tk.Radiobutton(view_frame, text=view.capitalize(),
                            variable=self.current_view, value=view).pack(side=tk.TOP, pady=2)
 
         projection_frame = tk.Frame(control_frame)
         projection_frame.pack(side=tk.RIGHT, padx=10, pady=5)
         tk.Label(projection_frame, text="Projection View").pack()
-        for view in VIEWS:
+        for view in self.project.views:
             tk.Radiobutton(projection_frame, text=view.capitalize(),
                            variable=self.projection_view, value=view).pack(side=tk.TOP, pady=2)
 
@@ -226,14 +213,14 @@ class LabelFramesTool(BaseAnnotationTool):
         control_frame_right.pack(side=tk.RIGHT, padx=20)
         tk.Button(control_frame_right, text="Exit", command=self.confirm_exit).pack(pady=5)
         tk.Button(control_frame_right, text="Back to Main Menu",
-                  command=self.main_tool.main_menu).pack(pady=5)
+                  command=self.main_tool.go_project_view).pack(pady=5)
 
         # Scrollable label buttons
         control_frame_labels = tk.Frame(main_frame)
         control_frame_labels.pack(side=tk.RIGHT, fill=tk.Y, padx=3, pady=1)
 
-        self.labels = BODY_PART_LABELS
-        self.label_colors = generate_label_colors(self.labels, CALIBRATION_LABELS)
+        self.labels = list(self.body_part_labels)
+        self.label_colors = generate_label_colors(self.labels, self.calibration_labels)
         self.current_label = tk.StringVar(value=self.labels[0])
 
         self.label_canvas = tk.Canvas(control_frame_labels, width=100)
@@ -253,7 +240,7 @@ class LabelFramesTool(BaseAnnotationTool):
 
         for label in self.labels:
             color = self.label_colors[label]
-            if label != "Door" and label in CALIBRATION_LABELS:
+            if label != "Door" and label in self.calibration_labels:
                 continue
             label_button = tk.Radiobutton(
                 self.label_frame_widget, text=label, variable=self.current_label,
@@ -297,14 +284,20 @@ class LabelFramesTool(BaseAnnotationTool):
                 button.select()
 
     def load_existing_labels(self, label_file_path, view):
-        label_file_path = label_file_path.replace(".csv", ".h5")
-        df = pd.read_hdf(label_file_path, key="df")
+        # Existing data is always read from the .h5 sibling. The csv path is
+        # passed in as a discoverability check.
+        h5_path = paths.labels_h5(self.project, self.recording, view)
+        df = paths.load_labels_h5(h5_path)
+        # The DLC label-file multi-index column header. Uses the user's
+        # project.name (DLC convention calls this slot 'scorer'); falls back
+        # to the literal string 'scorer' when no name is set.
+        scorer = self.project.name or "scorer"
 
         for frame_idx_pos, frame_idx in enumerate(df.index):
             for label in self.labels:
-                if ("Holly", label, "x") in df.columns and ("Holly", label, "y") in df.columns:
-                    x = df.loc[frame_idx, ("Holly", label, "x")]
-                    y = df.loc[frame_idx, ("Holly", label, "y")]
+                if (scorer, label, "x") in df.columns and (scorer, label, "y") in df.columns:
+                    x = df.loc[frame_idx, (scorer, label, "x")]
+                    y = df.loc[frame_idx, (scorer, label, "y")]
                     if not np.isnan(x) and not np.isnan(y):
                         self.body_part_points[frame_idx_pos][label][view] = (x, y)
                 else:
@@ -313,8 +306,8 @@ class LabelFramesTool(BaseAnnotationTool):
     # ----- Display -----
 
     def display_frame(self):
-        frame_nums = dict(zip(VIEWS, self.matched_frames[self.current_frame_index]))
-        imgs = {view: self.frames[view][frame_nums[view]] for view in VIEWS}
+        frame_nums = dict(zip(self.project.views, self.matched_frames[self.current_frame_index]))
+        imgs = {view: self.frames[view][frame_nums[view]] for view in self.project.views}
 
         self.display_views(imgs)
         for ax in self.axs:
@@ -341,9 +334,9 @@ class LabelFramesTool(BaseAnnotationTool):
             for view, coords in views.items():
                 if coords is not None:
                     x, y = coords
-                    ax = self.axs[view_index(view)]
+                    ax = self.axs[self.project.views.index(view)]
                     color = self.label_colors[label]
-                    if label in CALIBRATION_LABELS:
+                    if label in self.calibration_labels:
                         ax.scatter(x, y, c=color, s=self.marker_size_var.get() * 10,
                                    label=label, edgecolors="red", linewidths=1)
                     else:
@@ -409,7 +402,7 @@ class LabelFramesTool(BaseAnnotationTool):
             return
 
         view = self.current_view.get()
-        ax = self.axs[view_index(view)]
+        ax = self.axs[self.project.views.index(view)]
         label = self.current_label.get()
         color = self.label_colors[label]
         marker_size = self.marker_size_var.get()
@@ -427,7 +420,7 @@ class LabelFramesTool(BaseAnnotationTool):
             if event.key == "shift":
                 self.delete_closest_point(ax, event, frame_points)
             else:
-                if label == "Door" or label not in CALIBRATION_LABELS:
+                if label == "Door" or label not in self.calibration_labels:
                     frame_points[label][view] = (event.xdata, event.ydata)
                     ax.scatter(event.xdata, event.ydata, c=color, s=marker_size * 10,
                                label=label)
@@ -435,7 +428,7 @@ class LabelFramesTool(BaseAnnotationTool):
                     self.advance_label()
                     self.draw_reprojected_points()
         elif event.button == MouseButton.LEFT:
-            if label == "Door" or label not in CALIBRATION_LABELS:
+            if label == "Door" or label not in self.calibration_labels:
                 self.dragging_point = self.find_closest_point(ax, event, frame_points)
 
     def on_drag(self, event):
@@ -486,7 +479,7 @@ class LabelFramesTool(BaseAnnotationTool):
                         closest_view = view
 
         if closest_label and closest_view:
-            if closest_label == "Door" or closest_label not in CALIBRATION_LABELS:
+            if closest_label == "Door" or closest_label not in self.calibration_labels:
                 frame_points[closest_label][closest_view] = None
                 self.display_frame()
 
@@ -623,7 +616,7 @@ class LabelFramesTool(BaseAnnotationTool):
 
         near_edge, far_edge = self.find_3d_edges(view, bp)
         if near_edge is not None and far_edge is not None:
-            other_views = [v for v in VIEWS if v != view]
+            other_views = [v for v in self.project.views if v != view]
             for wcs in [near_edge, far_edge]:
                 key = "near" if wcs is near_edge else "far"
                 for other_view in other_views:
@@ -638,9 +631,9 @@ class LabelFramesTool(BaseAnnotationTool):
 
     def draw_reprojected_points(self):
         self.reproject_3d_to_2d()
-        for view in VIEWS:
+        for view in self.project.views:
             if view != self.projection_view.get():
-                ax = self.axs[view_index(view)]
+                ax = self.axs[self.project.views.index(view)]
                 if self.projection_lines[view] is not None:
                     self.projection_lines[view].remove()
                     self.projection_lines[view] = None
@@ -685,8 +678,8 @@ class LabelFramesTool(BaseAnnotationTool):
                 "belt points CCS": calib.belt_coords_CCS,
             }
 
-            for label in CALIBRATION_LABELS:
-                for view in VIEWS:
+            for label in self.calibration_labels:
+                for view in self.project.views:
                     x_vals = calibration_coordinates[
                         (calibration_coordinates["bodyparts"] == label)
                         & (calibration_coordinates["coords"] == "x")
@@ -713,13 +706,13 @@ class LabelFramesTool(BaseAnnotationTool):
             print(f"Error loading calibration data: {e}")
 
     def update_projection_matrices(self):
-        for view in VIEWS:
+        for view in self.project.views:
             self.get_p(view)
 
     # ----- Calibration optimization -----
 
     def optimize_calibration(self):
-        reference_points = OPTIMIZATION_REFERENCE_LABELS
+        reference_points, weights = self.project.require_optimisation_config()
 
         initial_total_error, initial_errors = self.compute_reprojection_error(reference_points)
         print(f"Initial total reprojection error: {initial_total_error}")
@@ -754,7 +747,7 @@ class LabelFramesTool(BaseAnnotationTool):
         self.update_calibration_labels_and_projection()
 
     def compute_reprojection_error(self, labels, extrinsics=None, weighted=False):
-        errors = {label: {v: 0 for v in VIEWS} for label in labels}
+        errors = {label: {v: 0 for v in self.project.views} for label in labels}
         total_error = 0
 
         for label in labels:
@@ -762,7 +755,7 @@ class LabelFramesTool(BaseAnnotationTool):
             if point_3d is not None:
                 point_3d = point_3d[:3]
                 projections = self.project_to_view(point_3d, extrinsics)
-                for view in VIEWS:
+                for view in self.project.views:
                     if self.body_part_points[self.current_frame_index][label][view] is not None:
                         original_x, original_y = self.body_part_points[self.current_frame_index][label][view]
                         if view in projections:
@@ -772,7 +765,7 @@ class LabelFramesTool(BaseAnnotationTool):
                                 + (projected_y - original_y) ** 2
                             )
                             if weighted:
-                                weight = REFERENCE_LABEL_WEIGHTS.get(label, 1.0)
+                                weight = (self.project.reference_label_weights or {}).get(label, 1.0)
                                 error *= weight
                             errors[label][view] = error
                             total_error += error
@@ -781,7 +774,7 @@ class LabelFramesTool(BaseAnnotationTool):
     def triangulate_point(self, label, extrinsics=None):
         P_list = []
         coords = []
-        for view in VIEWS:
+        for view in self.project.views:
             if self.body_part_points[self.current_frame_index][label][view] is not None:
                 P_list.append(self.get_p(view, extrinsics=extrinsics, return_value=True))
                 coords.append(self.body_part_points[self.current_frame_index][label][view])
@@ -795,7 +788,7 @@ class LabelFramesTool(BaseAnnotationTool):
 
     def project_to_view(self, point_3d, extrinsics=None):
         projections = {}
-        for view in VIEWS:
+        for view in self.project.views:
             if extrinsics is None:
                 extrinsics = self.calibration_data["extrinsics"]
             if extrinsics[view] is not None:
@@ -811,20 +804,20 @@ class LabelFramesTool(BaseAnnotationTool):
 
     def flatten_calibration_points(self):
         flat_points = []
-        for label in CALIBRATION_LABELS:
-            for view in VIEWS:
+        for label in self.calibration_labels:
+            for view in self.project.views:
                 if self.calibration_points_static[label][view] is not None:
                     flat_points.extend(self.calibration_points_static[label][view])
         return np.array(flat_points, dtype=float)
 
     def reshape_calibration_points(self, flat_points):
         calibration_points = {
-            label: {v: None for v in VIEWS}
-            for label in CALIBRATION_LABELS
+            label: {v: None for v in self.project.views}
+            for label in self.calibration_labels
         }
         i = 0
-        for label in CALIBRATION_LABELS:
-            for view in VIEWS:
+        for label in self.calibration_labels:
+            for view in self.project.views:
                 if self.calibration_points_static[label][view] is not None:
                     calibration_points[label][view] = [flat_points[i], flat_points[i + 1]]
                     i += 2
@@ -843,7 +836,7 @@ class LabelFramesTool(BaseAnnotationTool):
         calibration_coordinates = pd.DataFrame([
             {
                 "bodyparts": label, "coords": coord,
-                **{v: calibration_points[label][v][i] for v in VIEWS},
+                **{v: calibration_points[label][v][i] for v in self.project.views},
             }
             for label in calibration_points
             for i, coord in enumerate(["x", "y"])
@@ -855,7 +848,7 @@ class LabelFramesTool(BaseAnnotationTool):
         calibration_coordinates = pd.DataFrame([
             {
                 "bodyparts": label, "coords": coord,
-                **{v: self.calibration_points_static[label][v][i] for v in VIEWS},
+                **{v: self.calibration_points_static[label][v][i] for v in self.project.views},
             }
             for label in self.calibration_points_static
             for i, coord in enumerate(["x", "y"])
@@ -870,20 +863,17 @@ class LabelFramesTool(BaseAnnotationTool):
         }
 
     def save_optimized_calibration_points(self):
-        calibration_path = CALIBRATION_SAVE_PATH_TEMPLATE.format(
-            video_name=self.video_name
-        ).replace(".csv", "_enhanced.csv")
-        os.makedirs(os.path.dirname(calibration_path), exist_ok=True)
+        calibration_path = paths.calibration_csv_enhanced(self.project, self.recording)
 
         data = {"bodyparts": [], "coords": []}
-        for v in VIEWS:
+        for v in self.project.views:
             data[v] = []
         for label, coords in self.calibration_points_static.items():
-            if label in CALIBRATION_LABELS:
+            if label in self.calibration_labels:
                 for coord in ["x", "y"]:
                     data["bodyparts"].append(label)
                     data["coords"].append(coord)
-                    for view in VIEWS:
+                    for view in self.project.views:
                         if coords[view] is not None:
                             x, y = coords[view]
                             data[view].append(x if coord == "x" else y)
@@ -892,16 +882,14 @@ class LabelFramesTool(BaseAnnotationTool):
 
         df = pd.DataFrame(data)
         try:
-            df.to_csv(calibration_path, index=False)
+            paths.save_calibration_csv(df, calibration_path)
             messagebox.showinfo("Info", "Optimized calibration points saved successfully")
         except PermissionError:
             print(f"Permission denied: {calibration_path}")
             messagebox.showerror("Error", f"Unable to save: {calibration_path}")
 
     def update_calibration_labels_and_projection(self):
-        enhanced_path = CALIBRATION_SAVE_PATH_TEMPLATE.format(
-            video_name=self.video_name
-        ).replace(".csv", "_enhanced.csv")
+        enhanced_path = paths.calibration_csv_enhanced(self.project, self.recording)
         if os.path.exists(enhanced_path):
             self.load_calibration_data(enhanced_path)
             self.update_projection_matrices()
@@ -912,45 +900,41 @@ class LabelFramesTool(BaseAnnotationTool):
     # ----- Save / Exit -----
 
     def save_labels(self):
-        video_names = {
-            view: os.path.basename(self.extracted_frames_path[view])
-            for view in VIEWS
-        }
-        save_paths = {
-            view: os.path.join(
-                LABEL_SAVE_PATH_TEMPLATE[view].format(video_name=video_names[view]),
-                "CollectedData_Holly.csv",
-            )
-            for view in VIEWS
-        }
-        for path in save_paths.values():
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+        # The DLC label-file multi-index column header. Uses the user's
+        # project.name (DLC convention calls this slot 'scorer'); falls back
+        # to the literal string 'scorer' when no name is set.
+        scorer = self.project.name or "scorer"
+        # Per-view DataFrame second-level identifier in the MultiIndex.
+        # Mirrors the per-recording-per-view naming the old code produced
+        # via the directory basename.
+        video_id_for_view = {v: f"{self.recording.name}_{v}" for v in self.project.views}
 
-        data = {view: [] for view in VIEWS}
+        data = {view: [] for view in self.project.views}
         for frame_idx, labels in self.body_part_points.items():
             for label, views in labels.items():
                 for view, coords in views.items():
                     if coords is not None:
                         x, y = coords
-                        frame_number = self.matched_frames[frame_idx][view_index(view)]
+                        frame_number = self.matched_frames[frame_idx][self.project.views.index(view)]
                         filename = self.frame_names[view][frame_number]
-                        video_filename = os.path.basename(self.extracted_frames_path[view])
-                        data[view].append((frame_idx, label, x, y, "Holly",
-                                           video_filename, filename))
+                        data[view].append((
+                            frame_idx, label, x, y, scorer,
+                            video_id_for_view[view], filename,
+                        ))
 
         for view, view_data in data.items():
             df_view = pd.DataFrame(
                 view_data,
                 columns=["frame_index", "label", "x", "y", "scorer",
-                          "video_filename", "frame_filename"],
+                         "video_filename", "frame_filename"],
             )
 
             multi_cols = pd.MultiIndex.from_product(
-                [["Holly"], self.labels, ["x", "y"]],
+                [[scorer], self.labels, ["x", "y"]],
                 names=["scorer", "bodyparts", "coords"],
             )
             multi_idx = pd.MultiIndex.from_tuples([
-                ("labeled_data", video_names[view], filename)
+                ("labeled_data", video_id_for_view[view], filename)
                 for filename in df_view["frame_filename"].unique()
             ])
             df_ordered = pd.DataFrame(index=multi_idx, columns=multi_cols)
@@ -958,26 +942,25 @@ class LabelFramesTool(BaseAnnotationTool):
             for _, row in df_view.iterrows():
                 df_ordered.loc[
                     ("labeled_data", row.video_filename, row.frame_filename),
-                    ("Holly", row.label, "x"),
+                    (scorer, row.label, "x"),
                 ] = row.x
                 df_ordered.loc[
                     ("labeled_data", row.video_filename, row.frame_filename),
-                    ("Holly", row.label, "y"),
+                    (scorer, row.label, "y"),
                 ] = row.y
 
             df_ordered = df_ordered.apply(pd.to_numeric)
 
-            save_path = save_paths[view]
-            print(f"Saving to {save_path}")
             try:
-                df_ordered.to_csv(save_path)
-                df_ordered.to_hdf(
-                    save_path.replace(".csv", ".h5"), key="df", mode="w", format="fixed"
+                csv_path, h5_path = paths.save_labels(
+                    df_ordered, self.project, self.recording, view, scorer=scorer,
                 )
+                print(f"Saved {csv_path}")
             except PermissionError as e:
                 print(f"PermissionError: {e}")
-                messagebox.showerror("Error",
-                                     f"Unable to save: {save_path}. Check file permissions.")
+                messagebox.showerror(
+                    "Error", f"Unable to save labels for {view}. Check file permissions.",
+                )
 
         print("Labels saved successfully")
         messagebox.showinfo("Info", "Labels saved successfully")

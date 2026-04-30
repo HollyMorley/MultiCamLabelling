@@ -1,49 +1,69 @@
-"""Pure utility functions shared across GUI tools."""
+"""
+Pure utility functions shared across GUI tools.
+"""
 
-import os
 import time
-
-from annotation_tool.config import VIEWS
-
-
-def view_index(view):
-    """Return the axis index (0, 1, 2) for a camera view name."""
-    return VIEWS.index(view)
+import tkinter as tk
 
 
-def get_video_name_with_view(video_name, view):
-    """Insert camera view name before the final segment of a video name."""
-    split_video_name = video_name.split("_")
-    split_video_name.insert(-1, view)
-    return "_".join(split_video_name)
+def make_scrollable(parent) -> tk.Frame:
+    canvas = tk.Canvas(parent, borderwidth=0, highlightthickness=0)
+    scrollbar = tk.Scrollbar(parent, orient=tk.VERTICAL, command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    inner = tk.Frame(canvas)
+    inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    def _sync_scrollregion(_event=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def _sync_inner_width(event):
+        canvas.itemconfigure(inner_id, width=event.width)
+
+    inner.bind("<Configure>", _sync_scrollregion)
+    canvas.bind("<Configure>", _sync_inner_width)
+
+    # Mouse-wheel only while cursor is over this canvas.
+    def _on_wheel(event):
+        canvas.yview_scroll(int(-event.delta / 120), "units")
+
+    def _bind_wheel(_event):
+        canvas.bind_all("<MouseWheel>", _on_wheel)
+
+    def _unbind_wheel(_event):
+        canvas.unbind_all("<MouseWheel>")
+
+    canvas.bind("<Enter>", _bind_wheel)
+    canvas.bind("<Leave>", _unbind_wheel)
+
+    return inner
 
 
-def parse_video_path(video_path):
-    """Extract (name, date, camera_view) from a video file path."""
-    video_file = os.path.basename(video_path)
-    parts = video_file.split("_")
-    date = parts[1]
-    camera_view = [p for p in parts if p in VIEWS][0]
-    name_parts = [p for p in parts if p not in VIEWS]
-    name = "_".join(name_parts).replace(".avi", "")
-    return name, date, camera_view
+def help_button(parent, title: str, body: str) -> tk.Button:
+    """Build a small "?" button that opens a Toplevel popup containing `body`.
+    """
+    def _show():
+        top = tk.Toplevel(parent)
+        top.title(title)
+        top.transient(parent.winfo_toplevel())
+        # Center the popup roughly over the parent
+        parent.update_idletasks()
+        x = parent.winfo_rootx() + 40
+        y = parent.winfo_rooty() + 40
+        top.geometry(f"+{x}+{y}")
 
+        tk.Label(
+            top, text=body, wraplength=460, justify=tk.LEFT,
+            padx=14, pady=12,
+        ).pack(fill=tk.BOTH, expand=True)
+        tk.Button(top, text="OK", command=top.destroy, width=8).pack(pady=(0, 12))
+        top.bind("<Escape>", lambda e: top.destroy())
+        top.focus_set()
 
-def get_corresponding_video_path(video_path, current_view, target_view):
-    """Get the path to the same video from a different camera view."""
-    base_path = os.path.dirname(video_path)
-    video_file = os.path.basename(video_path)
-    corresponding_file = video_file.replace(current_view, target_view).replace(".avi", "")
-    return os.path.join(base_path, f"{corresponding_file}.avi")
-
-
-def extract_date_from_folder_path(folder_path):
-    """Find an 8-digit date string in a folder path."""
-    parts = folder_path.split(os.sep)
-    for part in parts:
-        if part.isdigit() and len(part) == 8:
-            return part
-    return None
+    return tk.Button(parent, text="?", width=2, command=_show)
 
 
 def rgb_to_hex(color):
