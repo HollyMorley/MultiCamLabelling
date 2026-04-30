@@ -71,7 +71,7 @@ class BaseAnnotationTool:
 
         return settings_frame
 
-    def create_3panel_canvas(self, parent, figsize=(10, 12)):
+    def create_per_view_canvas(self, parent, figsize=(10, 12)):
         """Create an N-row matplotlib figure embedded in tkinter, with one row
         per view in self.project.views."""
         self.fig, axs = plt.subplots(len(self.project.views), 1, figsize=figsize)

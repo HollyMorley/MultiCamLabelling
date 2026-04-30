@@ -218,7 +218,8 @@ class CameraData:
 class BeltPoints:
     """Holds data for the selected belt calibration points."""
 
-    def __init__(self, belt_coords):
+    def __init__(self, belt_coords, views):
+        self.views = list(views)
         self.points_str2int = {
             "StartPlatR": 0,
             "StartPlatL": 3,
@@ -256,9 +257,8 @@ class BeltPoints:
         )
         assert all(points_str_in_input_order[sorted_idcs_by_pt_ID] == sorted_kys)
 
-        list_cameras = list(df.columns[-3:])
         belt_coords_CCS = dict()
-        for cam in list_cameras:
+        for cam in self.views:
             imagePoints = np.array(
                 [df.loc[df["coords"] == "x"][cam], df.loc[df["coords"] == "y"][cam]]
             ).T
@@ -269,8 +269,9 @@ class BeltPoints:
     def plot_CCS(self, camera: CameraData):
         """Plot belt points in each camera coordinate system."""
         try:
-            fig, axes = plt.subplots(2, 2)
-            for cam, ax in zip(camera.specs.keys(), axes.reshape(-1)):
+            fig, axes = plt.subplots(len(self.views), 1)
+            axes_list = list(axes) if hasattr(axes, "__len__") else [axes]
+            for cam, ax in zip(camera.specs.keys(), axes_list):
                 x_offset = camera.specs[cam].get("crop_offset_x", 0)
                 y_offset = camera.specs[cam].get("crop_offset_y", 0)
                 ax.imshow(

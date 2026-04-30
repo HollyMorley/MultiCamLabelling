@@ -101,7 +101,7 @@ class CalibrateCamerasTool(BaseAnnotationTool):
                 variable=self.current_view, value=view,
             ).pack(pady=2)
 
-        self.create_3panel_canvas(main_frame)
+        self.create_per_view_canvas(main_frame)
         self.connect_mouse_events()
 
         # Load existing calibration if available. Recording-level files take

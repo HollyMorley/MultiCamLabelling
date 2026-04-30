@@ -257,19 +257,14 @@ class LabelFramesTool(BaseAnnotationTool):
         self.current_label.set(self.body_part_labels[0])
         self.update_label_button_selection()
 
-        # Canvas
-        self.fig, self.axs = plt.subplots(3, 1, figsize=(10, 10))
+        # Canvas — one row per view, sized by project config
+        self.create_per_view_canvas(main_frame, figsize=(10, 10))
         self.fig.subplots_adjust(left=0.02, right=0.999, top=0.99, bottom=0.01,
                                  wspace=0.01, hspace=0.005)
         for ax in self.axs:
             ax.tick_params(axis="both", which="major", labelsize=8)
             ax.xaxis.set_major_locator(plt.MultipleLocator(50))
             ax.yaxis.set_major_locator(plt.MultipleLocator(50))
-
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-        self.canvas = FigureCanvasTkAgg(self.fig, master=main_frame)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         self.tooltip = self.fig.text(
             0, 0, "", va="bottom", ha="left", fontsize=8,
@@ -673,7 +668,7 @@ class LabelFramesTool(BaseAnnotationTool):
     def load_calibration_data(self, calibration_data_path):
         try:
             calibration_coordinates = pd.read_csv(calibration_data_path)
-            calib = BasicCalibration(calibration_coordinates)
+            calib = BasicCalibration(calibration_coordinates, self.project.views)
             cameras_extrinsics = calib.estimate_cams_pose()
 
             self.calibration_data = {
@@ -846,7 +841,7 @@ class LabelFramesTool(BaseAnnotationTool):
             for label in calibration_points
             for i, coord in enumerate(["x", "y"])
         ])
-        calib = BasicCalibration(calibration_coordinates)
+        calib = BasicCalibration(calibration_coordinates, self.project.views)
         return calib.estimate_cams_pose()
 
     def recalculate_camera_parameters(self):
@@ -858,7 +853,7 @@ class LabelFramesTool(BaseAnnotationTool):
             for label in self.calibration_points_static
             for i, coord in enumerate(["x", "y"])
         ])
-        calib = BasicCalibration(calibration_coordinates)
+        calib = BasicCalibration(calibration_coordinates, self.project.views)
         cameras_extrinsics = calib.estimate_cams_pose()
         self.calibration_data = {
             "extrinsics": cameras_extrinsics,
