@@ -42,6 +42,41 @@ def make_scrollable(parent) -> tk.Frame:
     return inner
 
 
+def attach_tooltip(widget, text):
+    """Show `text` as a hover tooltip below `widget`, unless no text.
+
+    Used to explain why a disabled button is disabled. Bindings still fire on
+    state=DISABLED widgets, so this works for greyed-out buttons.
+    """
+    if not text:
+        return
+    state = {"window": None}
+
+    def show(_event):
+        if state["window"] is not None:
+            return
+        x = widget.winfo_rootx() + 8
+        y = widget.winfo_rooty() + widget.winfo_height() + 4
+        win = tk.Toplevel(widget)
+        win.wm_overrideredirect(True)
+        win.geometry(f"+{x}+{y}")
+        tk.Label(
+            win, text=text, bg="#ffffe0", fg="#333",
+            relief=tk.SOLID, borderwidth=1,
+            padx=6, pady=3, font=("Helvetica", 9), justify=tk.LEFT,
+            wraplength=320,
+        ).pack()
+        state["window"] = win
+
+    def hide(_event):
+        if state["window"] is not None:
+            state["window"].destroy()
+            state["window"] = None
+
+    widget.bind("<Enter>", show)
+    widget.bind("<Leave>", hide)
+
+
 def help_button(parent, title: str, body: str) -> tk.Button:
     """Build a small "?" button that opens a Toplevel popup containing `body`.
     """

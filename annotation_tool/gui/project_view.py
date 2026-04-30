@@ -4,6 +4,7 @@ Extract / Calibrate / Label actions."""
 import tkinter as tk
 
 from annotation_tool import paths
+from annotation_tool.gui.utils import attach_tooltip
 
 
 class ProjectView:
@@ -80,26 +81,36 @@ class ProjectView:
         status = ", ".join(bits) if bits else "—"
         tk.Label(row, text=status, width=30, anchor="w", fg="#666").pack(side=tk.LEFT)
 
-        # Actions — greyed out where prerequisites are missing
-        can_calibrate = bool(self.project.calibration_labels)   # only need calib labels in yaml
-        can_label = (                                           # need all labels defined, calib done, and frames extracted
-            has_frames and has_calib
-            and bool(self.project.body_part_labels)
-            and bool(self.project.calibration_labels)
+        # Actions — greyed out where prerequisites are missing. Each readiness
+        # message combines project.yaml config (project.*_ready()) with
+        # recording-level state (frames extracted, calibration saved).
+        extract_msg = self.project.extract_ready()
+        calibrate_msg = self.project.calibrate_ready()
+        label_msg = self.project.label_ready()
+        if label_msg is None and not has_frames:
+            label_msg = "needs frames — run Extract first"
+        if label_msg is None and not has_calib:
+            label_msg = "needs calibration — run Calibrate first"
+
+        self._tool_button(
+            row, "Extract", lambda r=recording: self.main_tool.go_extract(r),
+            extract_msg,
+        )
+        self._tool_button(
+            row, "Calibrate", lambda r=recording: self.main_tool.go_calibrate(r),
+            calibrate_msg,
+        )
+        self._tool_button(
+            row, "Label", lambda r=recording: self.main_tool.go_label(r),
+            label_msg,
         )
 
-        tk.Button(
-            row, text="Extract",
-            command=lambda r=recording: self.main_tool.go_extract(r),
-        ).pack(side=tk.LEFT, padx=2)
-        tk.Button(
-            row, text="Calibrate",
-            command=lambda r=recording: self.main_tool.
-            go_calibrate(r),
-            state=tk.NORMAL if can_calibrate else tk.DISABLED,
-        ).pack(side=tk.LEFT, padx=2)
-        tk.Button(
-            row, text="Label",
-            command=lambda r=recording: self.main_tool.go_label(r),
-            state=tk.NORMAL if can_label else tk.DISABLED,
-        ).pack(side=tk.LEFT, padx=2)
+    def _tool_button(self, parent, text, on_click, readiness_msg):
+        """Build one tool button. If readiness_msg is non-None, the button is
+        disabled and the message appears as a hover tooltip."""
+        btn = tk.Button(
+            parent, text=text, command=on_click,
+            state=tk.NORMAL if readiness_msg is None else tk.DISABLED,
+        )
+        btn.pack(side=tk.LEFT, padx=2)
+        attach_tooltip(btn, readiness_msg)

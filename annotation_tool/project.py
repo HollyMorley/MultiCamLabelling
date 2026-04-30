@@ -523,3 +523,41 @@ class Project:
                 "Optimize Calibration."
             )
         return self.optimisation_reference_labels, self.reference_label_weights
+
+    # ----- Is each tool ready to run? Drives the greyed-out buttons. -----
+    #
+    # Each method below checks if tool has everything it needs.
+    # Returns None if yes; otherwise a short explanation of what's missing,
+    # which project_view shows as a tooltip on the greyed-out button.
+    #
+    # These only check things stored in project.yaml. Whether frames have
+    # been extracted or calibration has been saved for a specific recording
+    # is checked separately by project_view (using helpers in paths.py).
+
+    def extract_ready(self) -> str | None:
+        if not self.framerate_fps:
+            return "framerate_fps not set in project.yaml"
+        return None
+
+    def calibrate_ready(self) -> str | None:
+        if not self.calibration_labels:
+            return "calibration_labels not set in project.yaml"
+        if not self.framerate_fps:
+            return "framerate_fps not set in project.yaml"
+        if not self.intrinsics:
+            return "intrinsics not set in project.yaml"
+        if not (
+            self.world_origin_label
+            and self.calibration_label_coordinates
+            and self.imaging_area
+        ):
+            return (
+                "calibration geometry not set "
+                "(world_origin_label / calibration_label_coordinates / imaging_area)"
+            )
+        return None
+
+    def label_ready(self) -> str | None:
+        if not self.body_part_labels:
+            return "body_part_labels not set in project.yaml"
+        return self.calibrate_ready()  # Label needs everything Calibrate needs
