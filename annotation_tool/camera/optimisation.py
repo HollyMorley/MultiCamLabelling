@@ -58,8 +58,12 @@ def optimize_extrinsics(
         extrinsics=extrinsics,
     )
 
+    # Reference view is held fixed (see _flatten_calibration_points) so the
+    # solver has an anchor; only the other views' label positions are
+    # perturbed, by up to +/- `boundary` pixels each.
     initial_flat_points = _flatten_calibration_points(
         calibration_points, project.calibration_labels, project.views,
+        project.reference_view,
     )
     bounds = [(p - boundary, p + boundary) for p in initial_flat_points]
 
@@ -75,6 +79,7 @@ def optimize_extrinsics(
 
     optimized_points = _reshape_calibration_points(
         result.x, calibration_points, project.calibration_labels, project.views,
+        project.reference_view,
     )
     new_calibration_data = estimate_extrinsics_from_labels(optimized_points, project)
 
@@ -179,26 +184,38 @@ def estimate_extrinsics_from_labels(calibration_points, project):
     }
 
 
-def _flatten_calibration_points(calibration_points, calibration_labels, views):
-    """Pack {label: {view: (x, y)}} into a flat 1D array for scipy."""
+def _flatten_calibration_points(calibration_points, calibration_labels, views, reference_view):
+    """Pack {label: {view: (x, y)}} into a flat 1D array for scipy.
+
+    The reference view's positions are excluded - they're held fixed during
+    optimisation so the solver has an anchor (otherwise all views can drift
+    together to a low-error but invalid configuration).
+    """
     flat = []
     for label in calibration_labels:
         for view in views:
+            if view == reference_view:
+                continue
             if calibration_points[label][view] is not None:
                 flat.extend(calibration_points[label][view])
     return np.array(flat, dtype=float)
 
 
-def _reshape_calibration_points(flat_points, original, calibration_labels, views):
+def _reshape_calibration_points(flat_points, original, calibration_labels, views, reference_view):
     """Inverse of _flatten_calibration_points.
 
-    `original` is the pre-flatten dict, consulted only to know which
-    (label, view) slots actually held a label (None slots stay None).
+    Reference-view positions come straight from `original` (they weren't in
+    flat_points). All other (label, view) positions are read out of
+    flat_points in the same order they were packed in.
     """
     out = {label: {v: None for v in views} for label in calibration_labels}
     i = 0
     for label in calibration_labels:
         for view in views:
+            if view == reference_view:
+                if original[label][view] is not None:
+                    out[label][view] = list(original[label][view])
+                continue
             if original[label][view] is not None:
                 out[label][view] = [flat_points[i], flat_points[i + 1]]
                 i += 2
@@ -216,7 +233,7 @@ def _objective_function(
     """
     points = _reshape_calibration_points(
         flat_points, original_calibration_points,
-        project.calibration_labels, project.views,
+        project.calibration_labels, project.views, project.reference_view,
     )
     new_data = estimate_extrinsics_from_labels(points, project)
     total_error, _ = compute_reprojection_error(

@@ -52,16 +52,24 @@ FIELD_HELP: dict[str, FieldHelp] = {
     ),
 
     "reference_view": FieldHelp(
-        short="Which camera anchors timestamp synchronisation.",
+        short="Anchor camera for timestamp sync and calibration optimisation.",
         long=(
-            "In the case of dropped frames, multi-camera frame matching is "
+            "The reference view plays two roles, so pick a camera that's "
+            "strong on both:\n\n"
+            "1. Timestamp synchronisation. Multi-camera frame matching is "
             "done by linearly fitting each non-reference view's timestamps "
-            "to the reference view's. The reference view's timeline is taken "
-            "as ground truth.\n\n"
-            "Pick the camera with the most reliable clock. If unsure, pick "
-            "whichever camera's recording you most trust to be continuous and "
-            "complete. If you are confident there is no frame dropping, "
-            "pick any camera."
+            "to the reference view's; its timeline is treated as ground "
+            "truth. Pick the camera with the most reliable clock and the "
+            "most continuous, complete recording.\n\n"
+            "2. Calibration optimisation. During Optimize Calibration, the "
+            "reference view's calibration label positions are held fixed; "
+            "the other views' positions are adjusted to align with them. "
+            "This means you also want the reference view to have the "
+            "clearest image (good resolution and contrast) so the labels "
+            "you place there are as accurate as possible.\n\n"
+            "If you can't get both, lean toward time-reliability - frame "
+            "matching is harder to recover from than a slightly noisier "
+            "label."
         ),
     ),
 
