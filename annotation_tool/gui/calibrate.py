@@ -76,6 +76,8 @@ class CalibrateCamerasTool(BaseAnnotationTool):
         tk.Button(button_frame, text="Home", command=self.reset_view).pack(pady=5)
         tk.Button(button_frame, text="Save Calibration Points",
                   command=self.save_calibration_points).pack(pady=5)
+        tk.Button(button_frame, text="Save + Set as Default",
+                  command=self.save_calibration_points_and_set_as_default).pack(pady=5)
         tk.Button(button_frame, text="Back",
                   command=self.main_tool.go_project_view).pack(pady=5)
 
@@ -102,15 +104,28 @@ class CalibrateCamerasTool(BaseAnnotationTool):
         self.create_3panel_canvas(main_frame)
         self.connect_mouse_events()
 
-        # Load existing calibration if available
+        # Load existing calibration if available. Recording-level files take
+        # precedence over the project-wide default.
+        default_calibration_file = paths.default_calibration_csv(self.project)
         if os.path.exists(enhanced_calibration_file):
-            self.load_calibration_points(enhanced_calibration_file)
+            if messagebox.askyesno(
+                "Enhanced Calibration Found",
+                "Enhanced calibration labels found for this recording. Load them?",
+            ):
+                self.load_calibration_points(enhanced_calibration_file)
         elif os.path.exists(self.calibration_file_path):
             if messagebox.askyesno(
                 "Calibration Found",
                 "Calibration labels found for this recording. Load them?",
             ):
                 self.load_calibration_points(self.calibration_file_path)
+        elif os.path.exists(default_calibration_file):
+            if messagebox.askyesno(
+                "Project Default Found",
+                "No calibration for this recording yet. "
+                "Load the project default as a starting point?",
+            ):
+                self.load_calibration_points(default_calibration_file)
 
         self.show_frames()
 
@@ -175,9 +190,9 @@ class CalibrateCamerasTool(BaseAnnotationTool):
                     point.set_sizes([self.marker_size_var.get() * 10])
         self.canvas.draw()
 
-    def save_calibration_points(self):
-        calibration_path = paths.calibration_csv(self.project, self.recording)
-
+    def _build_calibration_dataframe(self):
+        """Serialise the current scatter points into a {bodyparts, coords, *views}
+        DataFrame ready for save_calibration_csv."""
         data = {"bodyparts": [], "coords": []}
         for v in self.project.views:
             data[v] = []
@@ -191,10 +206,28 @@ class CalibrateCamerasTool(BaseAnnotationTool):
                         data[view].append(x if coord == "x" else y)
                     else:
                         data[view].append(None)
+        return pd.DataFrame(data)
 
-        df = pd.DataFrame(data)
-        paths.save_calibration_csv(df, calibration_path)
+    def save_calibration_points(self):
+        df = self._build_calibration_dataframe()
+        paths.save_calibration_csv(df, paths.calibration_csv(self.project, self.recording))
         messagebox.showinfo("Info", "Calibration points saved successfully")
+
+    def save_calibration_points_and_set_as_default(self):
+        """Save to the recording-level CSV and also write to the project-level
+        default, so future recordings can be offered this calibration as a
+        starting point. Confirms before overwriting an existing default."""
+        default_path = paths.default_calibration_csv(self.project)
+        if os.path.exists(default_path):
+            if not messagebox.askyesno(
+                "Overwrite Default",
+                "A project default calibration already exists. Overwrite it?",
+            ):
+                return
+        df = self._build_calibration_dataframe()
+        paths.save_calibration_csv(df, paths.calibration_csv(self.project, self.recording))
+        paths.save_calibration_csv(df, default_path)
+        messagebox.showinfo("Info", "Calibration saved and set as project default")
 
     # ----- Mouse interaction -----
 

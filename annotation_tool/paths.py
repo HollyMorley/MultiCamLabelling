@@ -75,6 +75,12 @@ def calibration_csv_enhanced(project: Project, recording: Recording) -> str:
     return os.path.join(calibration_dir(project, recording), "labels_enhanced.csv")
 
 
+def default_calibration_csv(project: Project) -> str:
+    """Project-wide default calibration CSV. Lives at the project root so it
+    can be offered as a fallback when a recording has no calibration of its own."""
+    return os.path.join(project.dir, "default_calibration.csv")
+
+
 def labels_dir(project: Project, recording: Recording, view: str) -> str:
     return os.path.join(recording_dir(project, recording), "labels", view)
 
