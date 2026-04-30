@@ -71,8 +71,8 @@ annotation_tool/
 ├── project.py               # Project + Recording dataclasses, YAML I/O, add_recording
 ├── paths.py                 # Disk-layout queries, file load/save helpers
 ├── camera/
-│   ├── calibration.py       # BasicCalibration wrapper
-│   └── reconstruction.py    # CameraData, BeltPoints, DLT triangulation
+│   ├── calibration.py       # CameraData, CalibrationLandmarks, InitialCalibration
+│   └── geometry.py          # DLT triangulation, ray-AABB clipping
 └── gui/
     ├── app.py               # Top-level state machine (Home → Project → Tool → back)
     ├── home.py              # Create / Load Project landing screen

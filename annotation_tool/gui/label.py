@@ -15,7 +15,7 @@ from annotation_tool import paths
 from annotation_tool.constants import (
     DEFAULT_BRIGHTNESS, DEFAULT_CONTRAST, DEFAULT_MARKER_SIZE,
 )
-from annotation_tool.camera.calibration import BasicCalibration
+from annotation_tool.camera.calibration import InitialCalibration
 from annotation_tool.camera.geometry import clip_ray_to_aabb, triangulate
 from annotation_tool.gui.base import BaseAnnotationTool
 from annotation_tool.gui.utils import (
@@ -655,14 +655,12 @@ class LabelFramesTool(BaseAnnotationTool):
     def load_calibration_data(self, calibration_data_path):
         try:
             calibration_coordinates = pd.read_csv(calibration_data_path)
-            calib = BasicCalibration(calibration_coordinates, self.project)
+            calib = InitialCalibration(calibration_coordinates, self.project)
             cameras_extrinsics = calib.estimate_cams_pose()
 
             self.calibration_data = {
                 "extrinsics": cameras_extrinsics,
                 "intrinsics": calib.cameras_intrinsics,
-                "belt points WCS": calib.belt_coords_WCS,
-                "belt points CCS": calib.belt_coords_CCS,
             }
 
             for label in self.calibration_labels:
@@ -828,7 +826,7 @@ class LabelFramesTool(BaseAnnotationTool):
             for label in calibration_points
             for i, coord in enumerate(["x", "y"])
         ])
-        calib = BasicCalibration(calibration_coordinates, self.project)
+        calib = InitialCalibration(calibration_coordinates, self.project)
         return calib.estimate_cams_pose()
 
     def recalculate_camera_parameters(self):
@@ -840,13 +838,11 @@ class LabelFramesTool(BaseAnnotationTool):
             for label in self.calibration_points_static
             for i, coord in enumerate(["x", "y"])
         ])
-        calib = BasicCalibration(calibration_coordinates, self.project)
+        calib = InitialCalibration(calibration_coordinates, self.project)
         cameras_extrinsics = calib.estimate_cams_pose()
         self.calibration_data = {
             "extrinsics": cameras_extrinsics,
             "intrinsics": calib.cameras_intrinsics,
-            "belt points WCS": calib.belt_coords_WCS,
-            "belt points CCS": calib.belt_coords_CCS,
         }
 
     def save_optimized_calibration_points(self):
