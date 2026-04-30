@@ -77,6 +77,62 @@ FIELD_HELP: dict[str, FieldHelp] = {
         ),
     ),
 
+    "intrinsics": FieldHelp(
+        short="Per-camera intrinsic specs (focal length, sensor, principal "
+              "point, crop offset). Edit in project.yaml.",
+        long=(
+            "One block per camera in cameras.views. Each block defines the "
+            "physical optics and sensor geometry needed to build the camera "
+            "matrix:\n"
+            "  focal_length_mm        - lens focal length\n"
+            "  pixel_size_x/y_mm      - physical size of one pixel\n"
+            "  x/y_size_px            - sensor dimensions\n"
+            "  principal_point_x/y_px - where the optical axis hits the sensor\n"
+            "  crop_offset_x/y        - shift if your videos are crops of a "
+            "larger sensor\n\n"
+            "Required by Calibrate. Best edited directly in project.yaml — "
+            "see the commented template for the expected schema."
+        ),
+    ),
+
+    "world_origin_label": FieldHelp(
+        short="Which calibration label sits at (0, 0, 0) in the world.",
+        long=(
+            "The calibration landmark that defines the origin of the world "
+            "coordinate system. Its entry in calibration_label_coordinates "
+            "must be [0, 0, 0]; every other label's coordinates are measured "
+            "relative to this point."
+        ),
+    ),
+
+    "calibration_label_coordinates": FieldHelp(
+        short="Real-world (x, y, z) mm position of each calibration label. "
+              "Edit in project.yaml.",
+        long=(
+            "Maps each calibration_label to its physical position in the "
+            "world coordinate system, in millimetres. world_origin_label "
+            "must appear here at [0, 0, 0]; all other labels are positioned "
+            "relative to it.\n\n"
+            "Required by Calibrate (used by solvePnP to recover camera pose). "
+            "Best edited directly in project.yaml."
+        ),
+    ),
+
+    "imaging_area": FieldHelp(
+        short="Bounding box (mm) of the volume your subjects move through. "
+              "Edit in project.yaml.",
+        long=(
+            "The 3D box that encloses every body-part position you care "
+            "about, declared as per-axis [min, max] ranges. Used by Label "
+            "to clip epipolar projection lines: the back-projected ray from "
+            "a clicked 2D point is intersected with this box, and the "
+            "entry/exit points are re-projected into the other views as a "
+            "short, meaningful segment.\n\n"
+            "Pick generously — anything outside this box gets cut off. "
+            "Required by Label."
+        ),
+    ),
+
     "name": FieldHelp(
         short="Must match 'Experimenter' name in your DeepLabCut projects.",
         long=(

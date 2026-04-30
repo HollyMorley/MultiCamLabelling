@@ -28,84 +28,35 @@ def triangulate(points_2d, projection_matrices):
 
 
 class CameraData:
-    """Holds intrinsic/extrinsic data for all three cameras (side, front, overhead).
+    """Per-view camera intrinsics + extrinsics computed from project config.
 
-    TODO: probably a class per camera makes more sense.
+    Reads intrinsic specs from project.intrinsics (one block per view in
+    project.views). The extrinsics are computed by solvePnP against the
+    landmark coordinates in BeltPoints during compute_cameras_extrinsics.
     """
 
-    def __init__(self, snapshot_paths=[], basic=True):
-        if not basic:
-            self.view_paths = snapshot_paths
-            self.views = self.get_cameras_views()
-
-        self.specs = self.get_cameras_specs()
+    def __init__(self, project):
+        self.project = project
+        self.specs = project.require_intrinsics()
         self.intrinsic_matrices = self.get_cameras_intrinsics()
-        self.extrinsics_ini_guess = self.get_cameras_extrinsics_guess()
-
-    def get_cameras_specs(self) -> dict:
-        """Return a dictionary with the camera specs for each camera."""
-        camera_specs = {
-            "side": {
-                "focal_length_mm": 16,
-                "y_size_px": 230,
-                "x_size_px": 1920,
-                "pixel_size_x_mm": 4.8e-3,
-                "pixel_size_y_mm": 4.8e-3,
-                "principal_point_x_px": 960,
-                "principal_point_y_px": 600,
-                "crop_offset_x": 0,
-                "crop_offset_y": 607,
-            },
-            "front": {
-                "focal_length_mm": 12,
-                "y_size_px": 320,
-                "x_size_px": 296,
-                "pixel_size_x_mm": 3.45e-3,
-                "pixel_size_y_mm": 3.45e-3,
-                "principal_point_x_px": 960,
-                "principal_point_y_px": 600,
-                "crop_offset_x": 652,
-                "crop_offset_y": 477,
-            },
-            "overhead": {
-                "focal_length_mm": 16,
-                "y_size_px": 116,
-                "x_size_px": 992,
-                "pixel_size_x_mm": 4.8e-3,
-                "pixel_size_y_mm": 4.8e-3,
-                "principal_point_x_px": 960,
-                "principal_point_y_px": 600,
-                "crop_offset_x": 608,
-                "crop_offset_y": 914,
-            },
-        }
-        return camera_specs
-
-    def get_cameras_views(self) -> dict:
-        """Return loaded camera view images."""
-        camera_views = dict()
-        for cam, path in self.view_paths.items():
-            camera_views[cam] = plt.imread(path)
-        return camera_views
 
     def get_cameras_intrinsics(self) -> dict:
-        """Define cameras' intrinsic matrices from technical specs data.
+        """Build each camera's intrinsic matrix from its spec block.
 
-        Each camera intrinsic matrix corresponds to matrix A in the first equation at
-        https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html
+        Each camera intrinsic matrix corresponds to matrix A in the first
+        equation at https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html
         """
         camera_intrinsics = dict()
-        for cam in self.specs.keys():
-            fx = self.specs[cam]["focal_length_mm"] / self.specs[cam]["pixel_size_x_mm"]
-            fy = self.specs[cam]["focal_length_mm"] / self.specs[cam]["pixel_size_y_mm"]
+        for cam in self.project.views:
+            spec = self.specs[cam]
+            fx = spec["focal_length_mm"] / spec["pixel_size_x_mm"]
+            fy = spec["focal_length_mm"] / spec["pixel_size_y_mm"]
 
-            cx = self.specs[cam].get("principal_point_x_px", self.specs[cam]["x_size_px"] / 2.0)
-            cy = self.specs[cam].get("principal_point_y_px", self.specs[cam]["y_size_px"] / 2.0)
+            cx = spec.get("principal_point_x_px", spec["x_size_px"] / 2.0)
+            cy = spec.get("principal_point_y_px", spec["y_size_px"] / 2.0)
 
-            offset_x = self.specs[cam].get("crop_offset_x", 0)
-            offset_y = self.specs[cam].get("crop_offset_y", 0)
-            cx -= offset_x
-            cy -= offset_y
+            cx -= spec.get("crop_offset_x", 0)
+            cy -= spec.get("crop_offset_y", 0)
 
             camera_intrinsics[cam] = np.array([
                 [fx, 0.0, cx],
@@ -114,80 +65,22 @@ class CameraData:
             ])
         return camera_intrinsics
 
-    def get_cameras_extrinsics_guess(self) -> dict:
-        """Define an initial guess for the cameras' extrinsic matrices.
-
-        Each camera extrinsic matrix corresponds to matrix T_w in the first equation at
-        https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html
-        """
-        box_length = 470  # mm
-        box_width = 53.5  # mm
-        box_height = 70  # mm
-
-        tvec_guess = dict()
-        tvec_guess["side"] = np.array([-box_length / 2, box_height / 2, 1050]).reshape(-1, 1)
-        tvec_guess["front"] = np.array([-box_width / 2, box_height / 2, box_length + 760]).reshape(-1, 1)
-        tvec_guess["overhead"] = np.array([-box_length / 2, box_width / 2, box_height + 1330]).reshape(-1, 1)
-
-        # fmt: off
-        rot_m_guess = dict()
-        rot_m_guess['side'] = np.array([
-            [1.0, 0.0, 0.0,],
-            [0.0, 0.0, 1.0,],
-            [0.0, -1.0, 0.0,],
-        ])
-        rot_m_guess['front'] = np.array([
-            [0.0, 0.0, -1.0,],
-            [1.0, 0.0, 0.0,],
-            [0.0, -1.0, 0.0,],
-        ])
-        rot_m_guess['overhead'] = np.array([
-            [1.0, 0.0, 0.0,],
-            [0.0, -1.0, 0.0,],
-            [0.0, 0.0, -1.0,],
-        ])
-        # fmt: on
-
-        # NOTE: transpose rotm to match opencv's definition
-        cameras_extrinsics_guess = dict()
-        for cam in self.specs.keys():
-            rodrigues_vec_opencv, _ = cv2.Rodrigues(rot_m_guess[cam].T)
-            cameras_extrinsics_guess[cam] = {
-                "rotm": rot_m_guess[cam].T,
-                "rvec": rodrigues_vec_opencv,
-                "tvec": tvec_guess[cam],
-            }
-        return cameras_extrinsics_guess
-
     def compute_cameras_extrinsics(
         self,
         belt_coords_WCS: np.ndarray,
         belt_coords_CCS: dict,
-        use_extrinsics_ini_guess: bool = False,
     ) -> dict:
-        """Apply solvePnP algorithm to estimate the extrinsic matrix for each camera."""
+        """Apply solvePnP to estimate the extrinsic matrix for each camera."""
         camera_extrinsics = dict()
 
-        for cam in self.specs.keys():
-            if not use_extrinsics_ini_guess:
-                retval, rvec, tvec = cv2.solvePnP(
-                    belt_coords_WCS,
-                    belt_coords_CCS[cam],
-                    self.intrinsic_matrices[cam],
-                    np.array([]),
-                    flags=cv2.SOLVEPNP_ITERATIVE,
-                )
-            else:
-                retval, rvec, tvec = cv2.solvePnP(
-                    belt_coords_WCS,
-                    belt_coords_CCS[cam],
-                    self.intrinsic_matrices[cam],
-                    np.array([]),
-                    rvec=self.extrinsics_ini_guess[cam]["rvec"].copy(),
-                    tvec=self.extrinsics_ini_guess[cam]["tvec"].copy(),
-                    useExtrinsicGuess=True,
-                    flags=cv2.SOLVEPNP_ITERATIVE,
-                )
+        for cam in self.project.views:
+            retval, rvec, tvec = cv2.solvePnP(
+                belt_coords_WCS,
+                belt_coords_CCS[cam],
+                self.intrinsic_matrices[cam],
+                np.array([]),
+                flags=cv2.SOLVEPNP_ITERATIVE,
+            )
 
             rotm, _ = cv2.Rodrigues(rvec)
             camera_pose_full = np.vstack(
@@ -216,55 +109,42 @@ class CameraData:
 
 
 class BeltPoints:
-    """Holds data for the selected belt calibration points."""
+    """Holds the calibration landmark positions in both world (WCS) and
+    camera (CCS) coordinate systems.
 
-    def __init__(self, belt_coords, views):
+    The canonical landmark order is the iteration order of
+    `calibration_label_coordinates`. WCS and per-camera CCS arrays are built
+    in that order so they line up for solvePnP.
+    """
+
+    def __init__(self, belt_coords_df, views, calibration_label_coordinates):
         self.views = list(views)
-        self.points_str2int = {
-            "StartPlatR": 0,
-            "StartPlatL": 3,
-            "TransitionR": 1,
-            "TransitionL": 2,
-            "Door": 4,
-            "StepR": 5,
-            "StepL": 6,
-        }
-        self.fn_points_str2int = np.vectorize(lambda x: self.points_str2int[x])
-
-        self.coords_CCS = self.get_points_in_CCS(belt_coords)
+        self.label_coords = calibration_label_coordinates
         self.coords_WCS = self.get_points_in_WCS()
+        self.coords_CCS = self.get_points_in_CCS(belt_coords_df)
 
     def get_points_in_WCS(self) -> np.ndarray:
-        """Express belt points in the world coordinate system (mm)."""
-        return np.array([
-            [0.0, 0.0, 0.0],
-            [470.0, 0.0, 0.0],
-            [470.0, 53.5, 0.0],
-            [0.0, 53.5, 0.0],
-            [-8.2, 26.0, 48.5],
-            [0.0, 0.0, 5.0],
-            [0.0, 53.5, 5.0],
-        ])
+        """Stack the per-label (x, y, z) coords in label_coords order."""
+        return np.array(
+            [list(self.label_coords[label]) for label in self.label_coords],
+            dtype=float,
+        )
 
     def get_points_in_CCS(self, df) -> dict:
-        """Express points in each camera's coordinate system."""
-        points_str_in_input_order = np.array(df.loc[df["coords"] == "x"]["bodyparts"])
-        points_IDs_in_input_order = self.fn_points_str2int(points_str_in_input_order)
-        sorted_idcs_by_pt_ID = np.argsort(points_IDs_in_input_order)
+        """Per-camera (N, 2) array of pixel coords, rows in label_coords order.
 
-        sorted_kys = sorted(
-            self.points_str2int.keys(), key=lambda ky: self.points_str2int[ky]
-        )
-        assert all(points_str_in_input_order[sorted_idcs_by_pt_ID] == sorted_kys)
-
-        belt_coords_CCS = dict()
-        for cam in self.views:
-            imagePoints = np.array(
-                [df.loc[df["coords"] == "x"][cam], df.loc[df["coords"] == "y"][cam]]
-            ).T
-            belt_coords_CCS[cam] = imagePoints[sorted_idcs_by_pt_ID, :]
-
-        return belt_coords_CCS
+        df is the calibration CSV: long-form with 'bodyparts', 'coords' (x/y),
+        and one column per camera view.
+        """
+        belt_coords_CCS: dict = {cam: [] for cam in self.views}
+        for label in self.label_coords:
+            x_row = df[(df["bodyparts"] == label) & (df["coords"] == "x")]
+            y_row = df[(df["bodyparts"] == label) & (df["coords"] == "y")]
+            for cam in self.views:
+                belt_coords_CCS[cam].append(
+                    [x_row[cam].iloc[0], y_row[cam].iloc[0]]
+                )
+        return {cam: np.array(rows, dtype=float) for cam, rows in belt_coords_CCS.items()}
 
     def plot_CCS(self, camera: CameraData):
         """Plot belt points in each camera coordinate system."""

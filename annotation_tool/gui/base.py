@@ -116,6 +116,11 @@ class BaseAnnotationTool:
             ax.imshow(cv2.cvtColor(adjusted, cv2.COLOR_BGR2RGB))
             ax.set_title(f"{view.capitalize()} View")
 
+        # ax.cla() above wiped any crosshair Line2D objects from the axes.
+        # Drop our now-stale references so the next update_crosshair doesn't
+        # try to .remove() orphaned artists (NotImplementedError).
+        self.crosshair_lines = []
+
     def on_scroll(self, event):
         if event.inaxes:
             ax = self.axs[self.project.views.index(self.current_view.get())]

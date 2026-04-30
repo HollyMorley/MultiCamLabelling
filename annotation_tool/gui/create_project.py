@@ -65,6 +65,11 @@ class CreateProjectDialog:
         self.num_cams_var = tk.StringVar(value=str(len(DEFAULT_VIEWS)))
         self._add_text_row(req, "Number of cameras", self.num_cams_var, field_key="num_cameras")
 
+        self.framerate_var = tk.StringVar()
+        self._add_text_row(
+            req, "Frame rate (fps)", self.framerate_var, field_key="framerate_fps",
+        )
+
         # ---- Optional at creation, required for Calibrate / Label ----
         opt = tk.LabelFrame(
             frame,
@@ -92,11 +97,6 @@ class CreateProjectDialog:
         self.weights_text = self._add_textarea(
             opt, "Reference label weights (label: weight per line)", height=3,
             field_key="reference_label_weights",
-        )
-
-        self.framerate_var = tk.StringVar()
-        self._add_text_row(
-            opt, "Frame rate (fps)", self.framerate_var, field_key="framerate_fps",
         )
 
     def _add_text_row(self, parent, label, var, field_key=None):
@@ -231,12 +231,15 @@ class CreateProjectDialog:
                     f"Number of cameras ({num_cams}) must match the number of views ({len(views)})."
                 )
 
+            framerate_fps = self._parse_float(self.framerate_var)
+            if framerate_fps is None:
+                raise ValueError("Frame rate (fps) is required.")
+
             calibration_labels = self._parse_lines(self.calibration_text)
             movable_calibration_labels = self._parse_lines(self.movable_calib_text)
             body_part_labels = self._parse_lines(self.bodyparts_text)
             optimisation_reference_labels = self._parse_lines(self.optref_text)
             reference_label_weights = self._parse_weights(self.weights_text)
-            framerate_fps = self._parse_float(self.framerate_var)
 
             project_dir = os.path.join(parent_dir, project_name)
             project = Project.create(

@@ -112,29 +112,54 @@ def apply_contrast_brightness(frame, contrast, brightness):
     return cv2.cvtColor(np.array(img_brightness), cv2.COLOR_RGB2BGR)
 
 
-def find_t_for_coordinate(val, coord_index, point_3d, camera_center):
-    """Find the parametric t value where the line through two 3D points
-    reaches a given coordinate value along one axis."""
-    coords = list(zip(point_3d, camera_center))
-    if coord_index not in (0, 1, 2):
-        raise ValueError("coord_index must be 0 (x), 1 (y), or 2 (z)")
-    p1, p2 = coords[coord_index]
-    return (val - p1) / (p2 - p1)
+def clip_ray_to_aabb(origin, direction, aabb):
+    """Clip a 3D ray to an axis-aligned bounding box (AABB) using the slab method.
 
+    The ray is parameterised as ``point(t) = origin + t * direction``. For each
+    world axis we find the t-values where the ray enters and exits the box's
+    slab on that axis; the ray is inside the box when it's inside all three
+    slabs simultaneously, so t_near = max(per-axis enters) and
+    t_far = min(per-axis exits). If t_near > t_far the ray misses the box.
 
-def get_line_equation(point_3d, camera_center):
-    """Return a closure that computes 3D coordinates along the line
-    from point_3d (t=0) to camera_center (t=1)."""
-    x1, y1, z1 = point_3d
-    x2, y2, z2 = camera_center
+    origin, direction: array-likes with 3 entries.
+    aabb: dict with keys 'x', 'y', 'z' each mapping to [min, max].
 
-    def line_at_t(t):
-        x = x1 + t * (x2 - x1)
-        y = y1 + t * (y2 - y1)
-        z = z1 + t * (z2 - z1)
-        return x, y, z
+    Returns (point_near, point_far) as numpy arrays, or (None, None) if the
+    ray misses the box.
+    """
+    import numpy as np
 
-    return line_at_t
+    origin = np.asarray(origin, dtype=float)
+    direction = np.asarray(direction, dtype=float)
+
+    t_enters: list[float] = []
+    t_exits: list[float] = []
+    for axis_idx, axis_name in enumerate(("x", "y", "z")):
+        a_min, a_max = aabb[axis_name]
+        d = direction[axis_idx]
+        if abs(d) < 1e-12:
+            # Ray is parallel to this axis: it's either always or never inside
+            # the slab. If origin is outside, the ray misses the box.
+            if origin[axis_idx] < a_min or origin[axis_idx] > a_max:
+                return None, None
+            continue  # this axis doesn't constrain t
+        t1 = (a_min - origin[axis_idx]) / d
+        t2 = (a_max - origin[axis_idx]) / d
+        if t1 > t2:
+            t1, t2 = t2, t1
+        t_enters.append(t1)
+        t_exits.append(t2)
+
+    if not t_enters:
+        # Ray parallel to every axis (degenerate): no segment to draw.
+        return None, None
+
+    t_near = max(t_enters)
+    t_far = min(t_exits)
+    if t_near > t_far:
+        return None, None  # ray misses the box
+
+    return origin + t_near * direction, origin + t_far * direction
 
 
 def debounce(wait):

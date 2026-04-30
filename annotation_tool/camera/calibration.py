@@ -2,11 +2,13 @@ from annotation_tool.camera.reconstruction import CameraData, BeltPoints
 
 
 class BasicCalibration:
-    def __init__(self, calibration_coords, views):
-        self.cameras = CameraData()
+    def __init__(self, calibration_coords, project):
+        self.project = project
+        self.cameras = CameraData(project)
         self.cameras_intrinsics = self.cameras.intrinsic_matrices
 
-        self.belt_pts = BeltPoints(calibration_coords, views)
+        _, label_coords, _ = project.require_calibration_geometry()
+        self.belt_pts = BeltPoints(calibration_coords, project.views, label_coords)
         self.belt_coords_CCS = self.belt_pts.coords_CCS
         self.belt_coords_WCS = self.belt_pts.coords_WCS
 

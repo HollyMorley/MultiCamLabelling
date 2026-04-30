@@ -20,7 +20,7 @@ from annotation_tool.camera.reconstruction import triangulate
 from annotation_tool.gui.base import BaseAnnotationTool
 from annotation_tool.gui.utils import (
     generate_label_colors, apply_contrast_brightness,
-    find_t_for_coordinate, get_line_equation, debounce,
+    clip_ray_to_aabb, debounce,
 )
 
 
@@ -309,6 +309,11 @@ class LabelFramesTool(BaseAnnotationTool):
         imgs = {view: self.frames[view][frame_nums[view]] for view in self.project.views}
 
         self.display_views(imgs)
+        # display_views runs ax.cla() on every axis, which orphans any Line2D
+        # we've stashed elsewhere. Drop those refs so we don't try to .remove()
+        # detached artists later (NotImplementedError).
+        self.projection_lines = {v: None for v in self.project.views}
+        self.spacer_lines = []
         for ax in self.axs:
             ax.set_title(ax.get_title(), fontsize=8)
             ax.tick_params(axis="both", which="both", direction="in",
@@ -578,34 +583,17 @@ class LabelFramesTool(BaseAnnotationTool):
         return None
 
     def find_3d_edges(self, view, bp):
+        """Back-project the clicked 2D point through the camera and clip the
+        resulting 3D ray to project.imaging_area. Returns the entry/exit
+        points of the ray as it passes through the imaging volume — these
+        are then re-projected into the other views as the epipolar segment.
+        """
         point_3d = self.find_projection(view, bp)
         camera_center = self.get_camera_center(view)
-
-        if point_3d is not None and camera_center is not None:
-            line_at_t = get_line_equation(point_3d, camera_center)
-
-            if view == "side":
-                coord_index = 1
-            elif view == "front":
-                coord_index = 0
-            elif view == "overhead":
-                coord_index = 2
-
-            near_edge = line_at_t(
-                find_t_for_coordinate(0, coord_index, point_3d, camera_center)
-            )
-
-            far_edge_value = self.calibration_data["belt points WCS"].T[coord_index].max()
-            if view == "front":
-                far_edge_value += 140
-            if view == "overhead":
-                far_edge_value = 60
-            far_edge = line_at_t(
-                find_t_for_coordinate(far_edge_value, coord_index, point_3d, camera_center)
-            )
-            return near_edge, far_edge
-
-        return None, None
+        if point_3d is None or camera_center is None:
+            return None, None
+        direction = point_3d - camera_center
+        return clip_ray_to_aabb(camera_center, direction, self.project.imaging_area)
 
     def reproject_3d_to_2d(self):
         view = self.projection_view.get()
@@ -668,7 +656,7 @@ class LabelFramesTool(BaseAnnotationTool):
     def load_calibration_data(self, calibration_data_path):
         try:
             calibration_coordinates = pd.read_csv(calibration_data_path)
-            calib = BasicCalibration(calibration_coordinates, self.project.views)
+            calib = BasicCalibration(calibration_coordinates, self.project)
             cameras_extrinsics = calib.estimate_cams_pose()
 
             self.calibration_data = {
@@ -841,7 +829,7 @@ class LabelFramesTool(BaseAnnotationTool):
             for label in calibration_points
             for i, coord in enumerate(["x", "y"])
         ])
-        calib = BasicCalibration(calibration_coordinates, self.project.views)
+        calib = BasicCalibration(calibration_coordinates, self.project)
         return calib.estimate_cams_pose()
 
     def recalculate_camera_parameters(self):
@@ -853,7 +841,7 @@ class LabelFramesTool(BaseAnnotationTool):
             for label in self.calibration_points_static
             for i, coord in enumerate(["x", "y"])
         ])
-        calib = BasicCalibration(calibration_coordinates, self.project.views)
+        calib = BasicCalibration(calibration_coordinates, self.project)
         cameras_extrinsics = calib.estimate_cams_pose()
         self.calibration_data = {
             "extrinsics": cameras_extrinsics,

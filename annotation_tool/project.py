@@ -66,6 +66,65 @@ _OPTIONAL_TEMPLATES: dict[str, str] = {
         "# framerate_fps: <framerate>   "
         "#                              "
     ),
+    "world_origin_label": (
+        "# world_origin_label: <calibration_label>   # required by Calibrate. Which calibration label sits at\n"
+        "#                                           # (0, 0, 0) in the world coordinate system."
+    ),
+    "calibration_label_coordinates": (
+        "# calibration_label_coordinates:    # required by Calibrate. Real-world (x, y, z) position in mm of\n"
+        "#                                   # each calibration_label. Must include world_origin_label at [0,0,0].\n"
+        "#   StartPlatR: [0.0,    0.0,  0.0]\n"
+        "#   StartPlatL: [0.0,   53.5,  0.0]\n"
+        "#   TransitionR: [470.0,  0.0,  0.0]\n"
+        "#   TransitionL: [470.0, 53.5,  0.0]\n"
+        "#   Door:        [-8.2,  26.0, 48.5]\n"
+        "#   StepR:       [0.0,    0.0,  5.0]\n"
+        "#   StepL:       [0.0,   53.5,  5.0]"
+    ),
+    "imaging_area": (
+        "# imaging_area:                     # required by Label. Bounding box (mm) of the volume your subjects\n"
+        "#                                   # move through. Used to clip epipolar projection lines to a\n"
+        "#                                   # meaningful segment.\n"
+        "#   x: [0,   610]\n"
+        "#   y: [0,    53.5]\n"
+        "#   z: [0,    60]"
+    ),
+    "intrinsics": (
+        "# intrinsics:                       # required by Calibrate. Per-camera intrinsic specs. One block per\n"
+        "#                                   # view in cameras.views. Focal length and pixel size build the\n"
+        "#                                   # pinhole matrix; crop offsets shift the principal point if your\n"
+        "#                                   # videos are crops of a larger sensor.\n"
+        "#   side:\n"
+        "#     focal_length_mm: 16\n"
+        "#     pixel_size_x_mm: 4.8e-3\n"
+        "#     pixel_size_y_mm: 4.8e-3\n"
+        "#     x_size_px: 1920\n"
+        "#     y_size_px: 230\n"
+        "#     principal_point_x_px: 960\n"
+        "#     principal_point_y_px: 600\n"
+        "#     crop_offset_x: 0\n"
+        "#     crop_offset_y: 607\n"
+        "#   front:\n"
+        "#     focal_length_mm: 12\n"
+        "#     pixel_size_x_mm: 3.45e-3\n"
+        "#     pixel_size_y_mm: 3.45e-3\n"
+        "#     x_size_px: 296\n"
+        "#     y_size_px: 320\n"
+        "#     principal_point_x_px: 960\n"
+        "#     principal_point_y_px: 600\n"
+        "#     crop_offset_x: 652\n"
+        "#     crop_offset_y: 477\n"
+        "#   overhead:\n"
+        "#     focal_length_mm: 16\n"
+        "#     pixel_size_x_mm: 4.8e-3\n"
+        "#     pixel_size_y_mm: 4.8e-3\n"
+        "#     x_size_px: 992\n"
+        "#     y_size_px: 116\n"
+        "#     principal_point_x_px: 960\n"
+        "#     principal_point_y_px: 600\n"
+        "#     crop_offset_x: 608\n"
+        "#     crop_offset_y: 914"
+    ),
 }
 
 
@@ -98,6 +157,10 @@ class Project:
     reference_label_weights: dict[str, float] | None = None
     movable_calibration_labels: list[str] | None = None
     framerate_fps: float | None = None
+    world_origin_label: str | None = None
+    calibration_label_coordinates: dict[str, list[float]] | None = None
+    imaging_area: dict[str, list[float]] | None = None
+    intrinsics: dict[str, dict[str, float]] | None = None
     recordings: list[Recording] = field(default_factory=list)
     created: str | None = None
 
@@ -118,6 +181,10 @@ class Project:
         reference_label_weights: dict[str, float] | None = None,
         movable_calibration_labels: list[str] | None = None,
         framerate_fps: float | None = None,
+        world_origin_label: str | None = None,
+        calibration_label_coordinates: dict[str, list[float]] | None = None,
+        imaging_area: dict[str, list[float]] | None = None,
+        intrinsics: dict[str, dict[str, float]] | None = None,
     ) -> "Project":
         """Create a new project on disk: makes the directory tree and writes
         project.yaml. Raises ValueError on invalid input or FileExistsError
@@ -158,6 +225,10 @@ class Project:
             reference_label_weights=reference_label_weights,
             movable_calibration_labels=movable_calibration_labels,
             framerate_fps=framerate_fps,
+            world_origin_label=world_origin_label,
+            calibration_label_coordinates=calibration_label_coordinates,
+            imaging_area=imaging_area,
+            intrinsics=intrinsics,
             recordings=[],
             created=date.today().isoformat(),
         )
@@ -214,6 +285,10 @@ class Project:
             reference_label_weights=data.get("reference_label_weights"),
             movable_calibration_labels=data.get("movable_calibration_labels"),
             framerate_fps=data.get("framerate_fps"),
+            world_origin_label=data.get("world_origin_label"),
+            calibration_label_coordinates=data.get("calibration_label_coordinates"),
+            imaging_area=data.get("imaging_area"),
+            intrinsics=data.get("intrinsics"),
             recordings=recordings,
             created=data.get("created"),
         )
@@ -242,6 +317,10 @@ class Project:
             "reference_label_weights": self.reference_label_weights,
             "movable_calibration_labels": self.movable_calibration_labels,
             "framerate_fps": self.framerate_fps,
+            "world_origin_label": self.world_origin_label,
+            "calibration_label_coordinates": self.calibration_label_coordinates,
+            "imaging_area": self.imaging_area,
+            "intrinsics": self.intrinsics,
         }
         for field, value in optional_state.items():
             if value is not None:
@@ -362,6 +441,79 @@ class Project:
                 "Add the camera frame rate (Hz) and reload the project."
             )
         return float(self.framerate_fps)
+
+    def require_intrinsics(self) -> dict[str, dict[str, float]]:
+        if not self.intrinsics:
+            raise ValueError(
+                "project.yaml is missing 'intrinsics'. "
+                "Add per-camera intrinsic specs (one block per view) "
+                "and reload the project."
+            )
+        missing = set(self.views) - set(self.intrinsics.keys())
+        if missing:
+            raise ValueError(
+                f"project.yaml 'intrinsics' is missing entries for views: "
+                f"{sorted(missing)}."
+            )
+        return self.intrinsics
+
+    def require_calibration_geometry(
+        self,
+    ) -> tuple[str, dict[str, list[float]], dict[str, list[float]]]:
+        """Return (world_origin_label, calibration_label_coordinates,
+        imaging_area), validated against each other and against
+        calibration_labels.
+
+        Raises ValueError on any missing or inconsistent field.
+        """
+        if not self.world_origin_label:
+            raise ValueError(
+                "project.yaml is missing 'world_origin_label'."
+            )
+        if not self.calibration_label_coordinates:
+            raise ValueError(
+                "project.yaml is missing 'calibration_label_coordinates'."
+            )
+        if not self.imaging_area:
+            raise ValueError(
+                "project.yaml is missing 'imaging_area'."
+            )
+        # Origin must be a known calibration label and sit at (0, 0, 0)
+        if self.world_origin_label not in self.calibration_label_coordinates:
+            raise ValueError(
+                f"world_origin_label {self.world_origin_label!r} has no entry "
+                f"in calibration_label_coordinates."
+            )
+        origin_xyz = self.calibration_label_coordinates[self.world_origin_label]
+        if list(origin_xyz) != [0.0, 0.0, 0.0]:
+            raise ValueError(
+                f"calibration_label_coordinates[{self.world_origin_label!r}] "
+                f"must be [0, 0, 0]; got {origin_xyz}."
+            )
+        # All calibration_labels must have coordinates
+        if self.calibration_labels:
+            missing = set(self.calibration_labels) - set(
+                self.calibration_label_coordinates.keys()
+            )
+            if missing:
+                raise ValueError(
+                    f"calibration_label_coordinates is missing entries for: "
+                    f"{sorted(missing)}."
+                )
+        # imaging_area sanity
+        for axis in ("x", "y", "z"):
+            if axis not in self.imaging_area:
+                raise ValueError(f"imaging_area is missing axis {axis!r}.")
+            lo, hi = self.imaging_area[axis]
+            if lo >= hi:
+                raise ValueError(
+                    f"imaging_area.{axis} must have min < max; got [{lo}, {hi}]."
+                )
+        return (
+            self.world_origin_label,
+            self.calibration_label_coordinates,
+            self.imaging_area,
+        )
 
     def require_optimisation_config(self) -> tuple[list[str], dict[str, float]]:
         if not self.optimisation_reference_labels or not self.reference_label_weights:
