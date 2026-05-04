@@ -21,13 +21,13 @@ from annotation_tool.camera.geometry import (
     project_3d_to_views,
 )
 from annotation_tool.camera.optimisation import optimize_extrinsics
-from annotation_tool.gui.base import BaseAnnotationTool
+from annotation_tool.gui.base import LabellingBase
 from annotation_tool.gui.utils import (
     generate_label_colors, apply_contrast_brightness, debounce,
 )
 
 
-class LabelFramesTool(BaseAnnotationTool):
+class LabelFramesTool(LabellingBase):
     def __init__(self, root, main_tool, project, recording):
         super().__init__(root, main_tool, project, recording)
         self.body_part_labels = project.require_body_part_labels()
@@ -312,7 +312,7 @@ class LabelFramesTool(BaseAnnotationTool):
 
         self.display_views(imgs)
         # display_views runs ax.cla() on every axis, which orphans any Line2D
-        # we've stashed elsewhere. Drop those refs so we don't try to .remove()
+        # stashed elsewhere. Drop those refs so don't try to .remove()
         # detached artists later (NotImplementedError).
         self.projection_lines = {v: None for v in self.project.views}
         self.spacer_lines = []

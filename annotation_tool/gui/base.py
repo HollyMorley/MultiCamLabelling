@@ -1,4 +1,14 @@
-"""Base class with shared UI logic for CalibrateCamerasTool and LabelFramesTool."""
+"""Base classes with shared UI logic for the per-videoframe tools.
+
+FrameDisplayBase:
+    - shared multi-view frame canvas, contrast/brightness, frame scrubbing.
+    Used by ExtractFramesTool, and as the parent of LabellingBase.
+
+LabellingBase:
+    - everything in FrameDisplayBase plus marker size, crosshair, pan/zoom
+    and the click/drag that calibration and body-part labelling need.
+    Used by CalibrateCamerasTool and LabelFramesTool.
+"""
 
 import tkinter as tk
 
@@ -14,13 +24,9 @@ from annotation_tool.constants import (
 from annotation_tool.gui.utils import apply_contrast_brightness
 
 
-class BaseAnnotationTool:
-    """Shared state, UI setup and mouse handling for the calibration and
-    body-part labelling tools. Subclasses must implement refresh_display,
-    on_click, on_drag, and skip_frames.
-
-    `project` provides view ordering (project.views) and the reference view
-    (project.reference_view) — replacing the old module-level VIEWS/REFERENCE_VIEW.
+class FrameDisplayBase:
+    """Shared multi-view frame display, contrast/brightness, and frame
+    scrubbing. Subclasses must implement refresh_display and skip_frames.
     """
 
     def __init__(self, root, main_tool, project, recording):
@@ -30,12 +36,6 @@ class BaseAnnotationTool:
         self.recording = recording
         self.contrast_var = tk.DoubleVar(value=DEFAULT_CONTRAST)
         self.brightness_var = tk.DoubleVar(value=DEFAULT_BRIGHTNESS)
-        self.marker_size_var = tk.DoubleVar(value=DEFAULT_MARKER_SIZE)
-        self.current_view = tk.StringVar(value=project.reference_view)
-        self.crosshair_lines = []
-        self.dragging_point = None
-        self.panning = False
-        self.pan_start = None
         self.fig = None
         self.axs = None
         self.canvas = None
@@ -44,42 +44,132 @@ class BaseAnnotationTool:
         self.frame_label = None
 
     def create_settings_controls(self, parent):
-        """Build marker size, contrast, and brightness sliders."""
+        """Build contrast and brightness sliders.
+
+        Subclasses can override to add tool-specific sliders alongside.
+        """
         settings_frame = tk.Frame(parent)
         settings_frame.pack(side=tk.LEFT, padx=10)
-
-        tk.Label(settings_frame, text="Marker Size").pack(side=tk.LEFT, padx=5)
-        tk.Scale(
-            settings_frame, from_=MIN_MARKER_SIZE, to=MAX_MARKER_SIZE,
-            orient=tk.HORIZONTAL, resolution=MARKER_SIZE_STEP,
-            variable=self.marker_size_var, command=self.update_marker_size,
-        ).pack(side=tk.LEFT, padx=5)
-
-        tk.Label(settings_frame, text="Contrast").pack(side=tk.LEFT, padx=5)
-        tk.Scale(
-            settings_frame, from_=MIN_CONTRAST, to=MAX_CONTRAST,
-            orient=tk.HORIZONTAL, resolution=CONTRAST_STEP,
-            variable=self.contrast_var, command=self.update_contrast_brightness,
-        ).pack(side=tk.LEFT, padx=5)
-
-        tk.Label(settings_frame, text="Brightness").pack(side=tk.LEFT, padx=5)
-        tk.Scale(
-            settings_frame, from_=MIN_BRIGHTNESS, to=MAX_BRIGHTNESS,
-            orient=tk.HORIZONTAL, resolution=BRIGHTNESS_STEP,
-            variable=self.brightness_var, command=self.update_contrast_brightness,
-        ).pack(side=tk.LEFT, padx=5)
-
+        self._add_contrast_slider(settings_frame)
+        self._add_brightness_slider(settings_frame)
         return settings_frame
+
+    def _add_contrast_slider(self, frame):
+        tk.Label(frame, text="Contrast").pack(side=tk.LEFT, padx=5)
+        tk.Scale(
+            frame, from_=MIN_CONTRAST, to=MAX_CONTRAST,
+            orient=tk.HORIZONTAL, resolution=CONTRAST_STEP,
+            variable=self.contrast_var,
+            command=self.update_contrast_brightness,
+        ).pack(side=tk.LEFT, padx=5)
+
+    def _add_brightness_slider(self, frame):
+        tk.Label(frame, text="Brightness").pack(side=tk.LEFT, padx=5)
+        tk.Scale(
+            frame, from_=MIN_BRIGHTNESS, to=MAX_BRIGHTNESS,
+            orient=tk.HORIZONTAL, resolution=BRIGHTNESS_STEP,
+            variable=self.brightness_var,
+            command=self.update_contrast_brightness,
+        ).pack(side=tk.LEFT, padx=5)
 
     def create_per_view_canvas(self, parent, figsize=(10, 12)):
         """Create an N-row matplotlib figure embedded in tkinter, with one row
         per view in self.project.views."""
-        self.fig, axs = plt.subplots(len(self.project.views), 1, figsize=figsize)
-        # plt.subplots returns a single Axes (not array) when there's only one row.
+        self.fig, axs = plt.subplots(len(self.project.views), 1,
+                                     figsize=figsize)
+        # plt.subplots returns a single Axes (not array) when there's only
+        # one row.
         self.axs = list(axs) if hasattr(axs, "__len__") else [axs]
         self.canvas = FigureCanvasTkAgg(self.fig, master=parent)
         self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH,
+                                         expand=True)
+
+    def add_skip_buttons(self, parent):
+        """Add frame skip buttons (+-1, +-10, +-100, +-1000)."""
+        buttons = [
+            ("<< 1000", -1000), ("<< 100", -100), ("<< 10", -10), ("<< 1", -1),
+            (">> 1", 1), (">> 10", 10), (">> 100", 100), (">> 1000", 1000),
+        ]
+        for i, (text, step) in enumerate(buttons):
+            button = tk.Button(parent, text=text,
+                               command=lambda s=step: self.skip_frames(s))
+            button.grid(row=0, column=i, padx=5)
+
+    def display_views(self, frames_by_view):
+        """Clear axes and display each view's BGR frame with
+        contrast/brightness applied.
+
+        frames_by_view: dict mapping view name -> BGR image. Views are rendered
+        in the canonical order defined by self.project.views.
+        """
+        contrast = self.contrast_var.get()
+        brightness = self.brightness_var.get()
+
+        for ax, view in zip(self.axs, self.project.views):
+            adjusted = apply_contrast_brightness(frames_by_view[view],
+                                                 contrast, brightness)
+            ax.cla()
+            ax.imshow(cv2.cvtColor(adjusted, cv2.COLOR_BGR2RGB))
+            ax.set_title(f"{view.capitalize()} View")
+
+    def update_contrast_brightness(self, val):
+        self.refresh_display()
+
+    def reset_view(self):
+        for ax in self.axs:
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+        self.contrast_var.set(DEFAULT_CONTRAST)
+        self.brightness_var.set(DEFAULT_BRIGHTNESS)
+        self.refresh_display()
+
+    def refresh_display(self):
+        raise NotImplementedError
+
+    def skip_frames(self, step):
+        raise NotImplementedError
+
+
+class LabellingBase(FrameDisplayBase):
+    """FrameDisplayBase plus marker size, crosshair, pan/zoom and click/drag
+    hooks for the calibration and body-part labelling tools.
+
+    Subclasses must additionally implement on_click and on_drag.
+    """
+
+    def __init__(self, root, main_tool, project, recording):
+        super().__init__(root, main_tool, project, recording)
+        self.marker_size_var = tk.DoubleVar(value=DEFAULT_MARKER_SIZE)
+        self.current_view = tk.StringVar(value=project.reference_view)
+        self.crosshair_lines = []
+        self.dragging_point = None
+        self.panning = False
+        self.pan_start = None
+
+    def create_settings_controls(self, parent):
+        """Build marker size, contrast, and brightness sliders."""
+        settings_frame = tk.Frame(parent)
+        settings_frame.pack(side=tk.LEFT, padx=10)
+        self._add_marker_size_slider(settings_frame)
+        self._add_contrast_slider(settings_frame)
+        self._add_brightness_slider(settings_frame)
+        return settings_frame
+
+    def _add_marker_size_slider(self, frame):
+        tk.Label(frame, text="Marker Size").pack(side=tk.LEFT, padx=5)
+        tk.Scale(
+            frame, from_=MIN_MARKER_SIZE, to=MAX_MARKER_SIZE,
+            orient=tk.HORIZONTAL, resolution=MARKER_SIZE_STEP,
+            variable=self.marker_size_var, command=self.update_marker_size,
+        ).pack(side=tk.LEFT, padx=5)
+
+    def display_views(self, frames_by_view):
+        super().display_views(frames_by_view)
+        # ax.cla() above wiped any crosshair Line2D objects from the axes.
+        # Drop our now-stale references so the next update_crosshair doesn't
+        # try to .remove() orphaned artists (NotImplementedError).
+        self.crosshair_lines = []
 
     def connect_mouse_events(self):
         """Wire up all shared mouse event handlers to the canvas."""
@@ -90,36 +180,6 @@ class BaseAnnotationTool:
         self.canvas.mpl_connect("button_release_event", self.on_mouse_release)
         self.canvas.mpl_connect("motion_notify_event", self.on_mouse_move)
         self.canvas.mpl_connect("scroll_event", self.on_scroll)
-
-    def add_skip_buttons(self, parent):
-        """Add frame skip buttons (+-1, +-10, +-100, +-1000)."""
-        buttons = [
-            ("<< 1000", -1000), ("<< 100", -100), ("<< 10", -10), ("<< 1", -1),
-            (">> 1", 1), (">> 10", 10), (">> 100", 100), (">> 1000", 1000),
-        ]
-        for i, (text, step) in enumerate(buttons):
-            button = tk.Button(parent, text=text, command=lambda s=step: self.skip_frames(s))
-            button.grid(row=0, column=i, padx=5)
-
-    def display_views(self, frames_by_view):
-        """Clear axes and display each view's BGR frame with contrast/brightness applied.
-
-        frames_by_view: dict mapping view name -> BGR image. Views are rendered
-        in the canonical order defined by self.project.views.
-        """
-        contrast = self.contrast_var.get()
-        brightness = self.brightness_var.get()
-
-        for ax, view in zip(self.axs, self.project.views):
-            adjusted = apply_contrast_brightness(frames_by_view[view], contrast, brightness)
-            ax.cla()
-            ax.imshow(cv2.cvtColor(adjusted, cv2.COLOR_BGR2RGB))
-            ax.set_title(f"{view.capitalize()} View")
-
-        # ax.cla() above wiped any crosshair Line2D objects from the axes.
-        # Drop our now-stale references so the next update_crosshair doesn't
-        # try to .remove() orphaned artists (NotImplementedError).
-        self.crosshair_lines = []
 
     def on_scroll(self, event):
         if event.inaxes:
@@ -163,8 +223,12 @@ class BaseAnnotationTool:
         self.crosshair_lines = []
         if event.inaxes:
             x, y = event.xdata, event.ydata
-            self.crosshair_lines.append(event.inaxes.axhline(y, color="cyan", linestyle="--", linewidth=0.5))
-            self.crosshair_lines.append(event.inaxes.axvline(x, color="cyan", linestyle="--", linewidth=0.5))
+            self.crosshair_lines.append(
+                event.inaxes.axhline(y, color="cyan", linestyle="--",
+                                     linewidth=0.5))
+            self.crosshair_lines.append(
+                event.inaxes.axvline(x, color="cyan", linestyle="--",
+                                     linewidth=0.5))
             self.canvas.draw_idle()
 
     def update_marker_size(self, val):
@@ -176,25 +240,8 @@ class BaseAnnotationTool:
             ax.set_ylim(ylim)
         self.canvas.draw_idle()
 
-    def update_contrast_brightness(self, val):
-        self.refresh_display()
-
-    def reset_view(self):
-        for ax in self.axs:
-            ax.set_xlim(0, 1)
-            ax.set_ylim(0, 1)
-        self.contrast_var.set(DEFAULT_CONTRAST)
-        self.brightness_var.set(DEFAULT_BRIGHTNESS)
-        self.refresh_display()
-
-    def refresh_display(self):
-        raise NotImplementedError
-
     def on_click(self, event):
         raise NotImplementedError
 
     def on_drag(self, event):
-        raise NotImplementedError
-
-    def skip_frames(self, step):
         raise NotImplementedError
