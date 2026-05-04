@@ -10,7 +10,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from annotation_tool import paths
 from annotation_tool.constants import DEFAULT_BRIGHTNESS, DEFAULT_CONTRAST
 from annotation_tool.gui.utils import apply_contrast_brightness
-from annotation_tool.gui.sync import load_synced_video_captures
+from annotation_tool.sync import load_synced_video_captures
 
 
 class ExtractFramesTool:

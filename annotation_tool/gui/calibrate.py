@@ -12,7 +12,7 @@ from matplotlib.backend_bases import MouseButton
 from annotation_tool import paths
 from annotation_tool.gui.base import BaseAnnotationTool
 from annotation_tool.gui.utils import generate_label_colors
-from annotation_tool.gui.sync import load_synced_video_captures
+from annotation_tool.sync import load_synced_video_captures
 
 
 class CalibrateCamerasTool(BaseAnnotationTool):

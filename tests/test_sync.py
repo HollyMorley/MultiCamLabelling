@@ -1,11 +1,11 @@
-"""Tests for annotation_tool/gui/sync.py — match_frames_by_timestamp.
+"""Tests for annotation_tool/sync.py — match_frames_by_timestamp.
 """
 
 import pytest
 
 pd = pytest.importorskip("pandas", reason="pandas required")
 
-from annotation_tool.gui.sync import match_frames_by_timestamp
+from annotation_tool.sync import match_frames_by_timestamp
 
 # Step / tolerance chosen so consecutive frames sit well inside tolerance,
 # while LARGE_OFFSET sits well outside it.

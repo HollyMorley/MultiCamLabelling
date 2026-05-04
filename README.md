@@ -151,7 +151,6 @@ annotation_tool/
     ├── extract.py           # Frame extraction from synchronised videos
     ├── calibrate.py         # Camera calibration point labelling
     ├── label.py             # Body part labelling with 3D projection lines
-    ├── sync.py              # Timestamp matching across cameras (for mild frame drop correction)
     └── utils.py             # Pure utility functions (scrolling, help button, colours)
 tests/
 ├── test_project.py          # Project + paths.py tests
