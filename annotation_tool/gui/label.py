@@ -191,8 +191,7 @@ class LabelFramesTool(BaseAnnotationTool):
         button_frame = tk.Frame(control_frame)
         button_frame.pack(side=tk.LEFT, padx=20)
 
-        tk.Button(button_frame, text="Home", command=self.reset_view).pack(pady=5)
-        tk.Button(button_frame, text="Save Labels", command=self.save_labels).pack(pady=5)
+        tk.Button(button_frame, text="Reset View", command=self.reset_view).pack(pady=5)
         tk.Button(button_frame, text="Spacer Lines",
                   command=self.toggle_spacer_lines).pack(pady=5)
         tk.Button(button_frame, text="Optimize Calibration",
@@ -217,9 +216,10 @@ class LabelFramesTool(BaseAnnotationTool):
 
         control_frame_right = tk.Frame(control_frame)
         control_frame_right.pack(side=tk.RIGHT, padx=20)
-        tk.Button(control_frame_right, text="Exit", command=self.confirm_exit).pack(pady=5)
-        tk.Button(control_frame_right, text="Back to Main Menu",
+        tk.Button(control_frame_right, text="Save Labels", command=self.save_labels).pack(pady=5)
+        tk.Button(control_frame_right, text="Back to Project View",
                   command=self.main_tool.go_project_view).pack(pady=5)
+        tk.Button(control_frame_right, text="Exit", command=self.confirm_exit).pack(pady=5)
 
         # Scrollable label buttons
         control_frame_labels = tk.Frame(main_frame)

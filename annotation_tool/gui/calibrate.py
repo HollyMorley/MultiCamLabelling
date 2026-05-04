@@ -73,13 +73,20 @@ class CalibrateCamerasTool(BaseAnnotationTool):
         button_frame = tk.Frame(control_frame)
         button_frame.pack(side=tk.LEFT, padx=20)
 
-        tk.Button(button_frame, text="Home", command=self.reset_view).pack(pady=5)
-        tk.Button(button_frame, text="Save Calibration Points",
+        save_column = tk.Frame(button_frame)
+        save_column.pack(side=tk.LEFT, padx=5)
+        tk.Button(save_column, text="Save Calibration Points",
                   command=self.save_calibration_points).pack(pady=5)
-        tk.Button(button_frame, text="Save + Set as Default",
+        tk.Button(save_column, text="Save + Set as Default",
                   command=self.save_calibration_points_and_set_as_default).pack(pady=5)
-        tk.Button(button_frame, text="Back",
+
+        nav_column = tk.Frame(button_frame)
+        nav_column.pack(side=tk.LEFT, padx=5)
+        tk.Button(nav_column, text="Reset View", command=self.reset_view).pack(pady=5)
+        tk.Button(nav_column, text="Back to Project View",
                   command=self.main_tool.go_project_view).pack(pady=5)
+        tk.Button(nav_column, text="Exit",
+                  command=self.root.quit).pack(pady=5)
 
         # Label selector
         control_frame_right = tk.Frame(main_frame)

@@ -84,8 +84,10 @@ class ExtractFramesTool:
 
         tk.Button(control_frame_right, text="Extract Frames",
                   command=self.save_extracted_frames).pack(pady=5)
-        tk.Button(control_frame_right, text="Back",
+        tk.Button(control_frame_right, text="Back to Project View",
                   command=self.main_tool.go_project_view).pack(pady=5)
+        tk.Button(control_frame_right, text="Exit",
+                  command=self.root.quit).pack(pady=5)
 
         self.fig, axs = plt.subplots(len(views), 1, figsize=(10, 12))
         self.axs = list(axs) if hasattr(axs, "__len__") else [axs]
