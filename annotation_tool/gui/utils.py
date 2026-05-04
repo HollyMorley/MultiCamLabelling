@@ -134,17 +134,14 @@ def generate_label_colors(labels, calibration_labels=None):
 
 
 def apply_contrast_brightness(frame, contrast, brightness):
-    """Apply contrast and brightness adjustments to a BGR frame."""
+    """Apply contrast and brightness adjustments to a BGR frame.
+    """
     import cv2
-    import numpy as np
-    from PIL import Image, ImageEnhance
 
-    pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    enhancer = ImageEnhance.Contrast(pil_img)
-    img_contrast = enhancer.enhance(contrast)
-    enhancer = ImageEnhance.Brightness(img_contrast)
-    img_brightness = enhancer.enhance(brightness)
-    return cv2.cvtColor(np.array(img_brightness), cv2.COLOR_RGB2BGR)
+    mean = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).mean()
+    alpha = brightness * contrast
+    beta = brightness * (1 - contrast) * mean
+    return cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
 
 
 def debounce(wait):

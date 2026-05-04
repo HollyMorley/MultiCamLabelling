@@ -7,7 +7,6 @@ dependencies:
   - opencv
   - pandas
   - matplotlib
-  - pillow
   - scipy
   - scikit-learn
   - tk
