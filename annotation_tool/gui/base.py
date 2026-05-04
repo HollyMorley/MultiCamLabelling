@@ -118,8 +118,10 @@ class FrameDisplayBase:
 
     def reset_view(self):
         for ax in self.axs:
-            ax.set_xlim(0, 1)
-            ax.set_ylim(0, 1)
+            if ax.get_images():
+                img = ax.get_images()[0].get_array()
+                ax.set_xlim(0, img.shape[1])
+                ax.set_ylim(img.shape[0], 0)
         self.contrast_var.set(DEFAULT_CONTRAST)
         self.brightness_var.set(DEFAULT_BRIGHTNESS)
         self.refresh_display()
@@ -163,6 +165,12 @@ class LabellingBase(FrameDisplayBase):
             orient=tk.HORIZONTAL, resolution=MARKER_SIZE_STEP,
             variable=self.marker_size_var, command=self.update_marker_size,
         ).pack(side=tk.LEFT, padx=5)
+
+    def reset_view(self):
+        # Set marker size first so the inherited refresh_display picks up the
+        # new value when it redraws.
+        self.marker_size_var.set(DEFAULT_MARKER_SIZE)
+        super().reset_view()
 
     def display_views(self, frames_by_view):
         super().display_views(frames_by_view)

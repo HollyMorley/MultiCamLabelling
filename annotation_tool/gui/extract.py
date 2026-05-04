@@ -4,28 +4,17 @@ import tkinter as tk
 from tkinter import messagebox
 
 import cv2
-from matplotlib import pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from annotation_tool import paths
-from annotation_tool.constants import DEFAULT_BRIGHTNESS, DEFAULT_CONTRAST
-from annotation_tool.gui.utils import apply_contrast_brightness
+from annotation_tool.gui.base import FrameDisplayBase
 from annotation_tool.sync import load_synced_video_captures
 
 
-class ExtractFramesTool:
+class ExtractFramesTool(FrameDisplayBase):
     def __init__(self, root, main_tool, project, recording):
-        self.root = root
-        self.main_tool = main_tool
-        self.project = project
-        self.recording = recording
+        super().__init__(root, main_tool, project, recording)
         self.caps = {}
         self.total_frames = 0
-        self.current_frame_index = 0
-        self.matched_frames = []
-        self.contrast_var = tk.DoubleVar(value=DEFAULT_CONTRAST)
-        self.brightness_var = tk.DoubleVar(value=DEFAULT_BRIGHTNESS)
-
         self._open_videos_and_sync()
 
     def _open_videos_and_sync(self):
@@ -70,14 +59,7 @@ class ExtractFramesTool:
 
         skip_frame = tk.Frame(self.root)
         skip_frame.pack(side=tk.TOP, pady=10)
-
-        buttons = [
-            ("<< 1000", -1000), ("<< 100", -100), ("<< 10", -10), ("<< 1", -1),
-            (">> 1", 1), (">> 10", 10), (">> 100", 100), (">> 1000", 1000),
-        ]
-        for i, (text, step) in enumerate(buttons):
-            tk.Button(skip_frame, text=text,
-                      command=lambda s=step: self.skip_frames(s)).grid(row=0, column=i, padx=5)
+        self.add_skip_buttons(skip_frame)
 
         control_frame_right = tk.Frame(self.root)
         control_frame_right.pack(side=tk.RIGHT, padx=10, pady=10)
@@ -89,12 +71,7 @@ class ExtractFramesTool:
         tk.Button(control_frame_right, text="Exit",
                   command=self.root.quit).pack(pady=5)
 
-        self.fig, axs = plt.subplots(len(views), 1, figsize=(10, 12))
-        self.axs = list(axs) if hasattr(axs, "__len__") else [axs]
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
+        self.create_per_view_canvas(self.root)
         self.display_frame(0)
 
     def skip_frames(self, step):
@@ -124,17 +101,11 @@ class ExtractFramesTool:
         imgs, _ = self.read_matched(index)
         if imgs is None:
             return
-
-        contrast = self.contrast_var.get()
-        brightness = self.brightness_var.get()
-
-        for ax, view in zip(self.axs, self.project.views):
-            adjusted = apply_contrast_brightness(imgs[view], contrast, brightness)
-            ax.cla()
-            ax.imshow(cv2.cvtColor(adjusted, cv2.COLOR_BGR2RGB))
-            ax.set_title(f"{view.capitalize()} View")
-
+        self.display_views(imgs)
         self.canvas.draw()
+
+    def refresh_display(self):
+        self.display_frame(self.current_frame_index)
 
     def update_frame_label(self, val):
         index = int(val)

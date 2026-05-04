@@ -11,9 +11,6 @@ from matplotlib import pyplot as plt
 from matplotlib.backend_bases import MouseButton
 
 from annotation_tool import paths
-from annotation_tool.constants import (
-    DEFAULT_BRIGHTNESS, DEFAULT_CONTRAST, DEFAULT_MARKER_SIZE,
-)
 from annotation_tool.camera.calibration import InitialCalibration
 from annotation_tool.camera.geometry import (
     back_project_2d_to_3d, build_projection_matrix,
@@ -513,15 +510,6 @@ class LabelFramesTool(LabellingBase):
     def on_label_select(self, label):
         self.current_label.set(label)
         self.draw_reprojected_points()
-
-    def reset_view(self):
-        for ax in self.axs:
-            ax.set_xlim(0, ax.get_images()[0].get_array().shape[1])
-            ax.set_ylim(ax.get_images()[0].get_array().shape[0], 0)
-        self.contrast_var.set(DEFAULT_CONTRAST)
-        self.brightness_var.set(DEFAULT_BRIGHTNESS)
-        self.marker_size_var.set(DEFAULT_MARKER_SIZE)
-        self.display_frame()
 
     # ----- Spacer lines -----
 
