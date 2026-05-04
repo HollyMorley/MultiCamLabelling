@@ -17,6 +17,12 @@ features; not strictly prioritised.
 - Make Spacer Lines configurable (count and axis) instead of the current 12-on-x default.
   Maybe allow multiples, accessible via dropdown.
 - Refresh projection lines when the active view is switched in Label.
+- Calibration points: switch on-disk format to JSON (from df) and pass a
+  dict[label][view] -> (x, y) | None through the pipeline. Drop the
+  long-format DataFrame entirely — InitialCalibration.get_points_in_CCS
+  only iterates it by (label, coord, view) lookup, which the dict does
+  natively. Removes melt/unmelt code in calibrate.py, label.py, and
+  optimisation.py.
 
 ## Larger / structural
 
