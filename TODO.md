@@ -29,9 +29,6 @@ features; not strictly prioritised.
 - Add type hints across the entire project.
 - Make timestamp adjustment optional in `project.yaml`, or report a "how bad is the drift?"
   number/graph instead of always running the linear fit.
-- Split `BaseAnnotationTool` into a `FrameBrowserTool` (used by Extract) and an
-  annotation subclass (used by Calibrate / Label). Currently, Extract reimplements
-  some of the base-class scaffolding but in limited scope (no labelling).
 - Generalise the multi-view layout. Equal-height stacked rows won't suit
   every setup where view counts and aspect ratios will vary.
 - Add more comprehensive test coverage.
