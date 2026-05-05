@@ -32,3 +32,4 @@ features; not strictly prioritised.
 - Generalise the multi-view layout. Equal-height stacked rows won't suit
   every setup where view counts and aspect ratios will vary.
 - Add more comprehensive test coverage.
+- Implement CI (GitHub Actions) to run tests on every push.
