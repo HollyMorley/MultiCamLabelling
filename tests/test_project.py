@@ -2,11 +2,7 @@
 """
 
 import os
-
 import pytest
-
-# Skip the whole file if pyyaml isn't available — Project depends on it.
-yaml = pytest.importorskip("yaml", reason="pyyaml required")
 
 from annotation_tool import paths
 from annotation_tool.project import Project
