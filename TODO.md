@@ -23,6 +23,7 @@ features; not strictly prioritised.
   only iterates it by (label, coord, view) lookup, which the dict does
   natively. Removes melt/unmelt code in calibrate.py, label.py, and
   optimisation.py.
+- Add pop-up warning suggesting re-do in Calibrate for if calibration fails via solvePnP in camera/calibration.py 
 
 ## Larger / structural
 

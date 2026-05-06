@@ -59,6 +59,8 @@ class CameraData:
         camera_extrinsics = dict()
 
         for cam in self.project.views:
+            # solvePnP returns the camera's rotation (as a 3-element axis-angle
+            # vector, rvec) and translation (tvec).
             retval, rvec, tvec = cv2.solvePnP(
                 coords_WCS,
                 coords_CCS[cam],
@@ -66,7 +68,9 @@ class CameraData:
                 np.array([]),
                 flags=cv2.SOLVEPNP_ITERATIVE,
             )
+            assert retval, f"solvePnP failed for camera {cam!r}"
 
+            # Convert the rotation vector into a 3x3 rotation matrix.
             rotm, _ = cv2.Rodrigues(rvec)
             camera_pose_full = np.vstack(
                 [np.hstack([rotm, tvec]), np.flip(np.eye(1, 4))]
