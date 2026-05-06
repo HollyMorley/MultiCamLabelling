@@ -8,9 +8,9 @@ from annotation_tool.project import PROJECT_FILE
 
 
 class HomeScreen:
-    def __init__(self, root, main_tool):
+    def __init__(self, root, navigator):
         self.root = root
-        self.main_tool = main_tool
+        self.navigator = navigator
         self.build()
 
     def build(self):
@@ -34,7 +34,7 @@ class HomeScreen:
 
         tk.Button(
             frame, text="Create Project", width=24,
-            command=self.main_tool.go_create_project,
+            command=self.navigator.go_create_project,
         ).pack(pady=6)
         tk.Button(
             frame, text="Load Project", width=24,
@@ -53,6 +53,6 @@ class HomeScreen:
             )
             return
         try:
-            self.main_tool.load_project(chosen)
+            self.navigator.load_project(chosen)
         except Exception as e:
             messagebox.showerror("Failed to load project", str(e))

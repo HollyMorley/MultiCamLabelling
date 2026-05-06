@@ -29,9 +29,9 @@ class FrameDisplayBase:
     scrubbing. Subclasses must implement refresh_display and skip_frames.
     """
 
-    def __init__(self, root, main_tool, project, recording):
+    def __init__(self, root, navigator, project, recording):
         self.root = root
-        self.main_tool = main_tool
+        self.navigator = navigator
         self.project = project
         self.recording = recording
         self.contrast_var = tk.DoubleVar(value=DEFAULT_CONTRAST)
@@ -140,8 +140,8 @@ class LabellingBase(FrameDisplayBase):
     Subclasses must additionally implement on_click and on_drag.
     """
 
-    def __init__(self, root, main_tool, project, recording):
-        super().__init__(root, main_tool, project, recording)
+    def __init__(self, root, navigator, project, recording):
+        super().__init__(root, navigator, project, recording)
         self.marker_size_var = tk.DoubleVar(value=DEFAULT_MARKER_SIZE)
         self.current_view = tk.StringVar(value=project.reference_view)
         self.crosshair_lines = []

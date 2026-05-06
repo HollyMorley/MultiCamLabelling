@@ -11,8 +11,8 @@ from annotation_tool.sync import load_synced_video_captures
 
 
 class ExtractFramesTool(FrameDisplayBase):
-    def __init__(self, root, main_tool, project, recording):
-        super().__init__(root, main_tool, project, recording)
+    def __init__(self, root, navigator, project, recording):
+        super().__init__(root, navigator, project, recording)
         self.caps = {}
         self.total_frames = 0
         self._open_videos_and_sync()
@@ -20,7 +20,7 @@ class ExtractFramesTool(FrameDisplayBase):
     def _open_videos_and_sync(self):
         """Open video captures for every view and build the matched-frame
         list using timestamp synchronisation."""
-        self.main_tool.clear_root()
+        self.navigator.clear_root()
 
         self.caps, self.total_frames, self.matched_frames = load_synced_video_captures(
             self.project, self.recording,
@@ -38,7 +38,7 @@ class ExtractFramesTool(FrameDisplayBase):
         self._show_frames_extraction()
 
     def _show_frames_extraction(self):
-        self.main_tool.clear_root()
+        self.navigator.clear_root()
         views = self.project.views
         ref = self.project.reference_view
 
@@ -67,7 +67,7 @@ class ExtractFramesTool(FrameDisplayBase):
         tk.Button(control_frame_right, text="Extract Frames",
                   command=self.save_extracted_frames).pack(pady=5)
         tk.Button(control_frame_right, text="Back to Project View",
-                  command=self.main_tool.go_project_view).pack(pady=5)
+                  command=self.navigator.go_project_view).pack(pady=5)
         tk.Button(control_frame_right, text="Exit",
                   command=self.root.quit).pack(pady=5)
 

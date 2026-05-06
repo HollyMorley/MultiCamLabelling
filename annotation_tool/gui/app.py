@@ -5,7 +5,7 @@ Main application — top-level state machine.
 from annotation_tool.project import Project
 
 
-class MainTool:
+class Navigator:
     def __init__(self, root):
         self.root = root
         self.root.title("3D Annotation GUI")

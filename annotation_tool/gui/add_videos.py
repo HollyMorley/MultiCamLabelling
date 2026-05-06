@@ -14,9 +14,9 @@ from annotation_tool.project import Project
 
 
 class AddVideosScreen:
-    def __init__(self, root, main_tool, project: Project):
+    def __init__(self, root, navigator, project: Project):
         self.root = root
-        self.main_tool = main_tool
+        self.navigator = navigator
         self.project = project
 
         # rows = list of dicts: {path, view_var, basename}
@@ -26,7 +26,7 @@ class AddVideosScreen:
         self.build()
 
     def build(self):
-        self.main_tool.clear_root()
+        self.navigator.clear_root()
         self.root.title("Add Videos")
 
         outer = tk.Frame(self.root)
@@ -69,7 +69,7 @@ class AddVideosScreen:
         # Buttons
         btns = tk.Frame(outer)
         btns.pack(fill=tk.X)
-        tk.Button(btns, text="Cancel", command=self.main_tool.go_project_view).pack(side=tk.RIGHT, padx=4)
+        tk.Button(btns, text="Cancel", command=self.navigator.go_project_view).pack(side=tk.RIGHT, padx=4)
         tk.Button(btns, text="Add Recording", command=self._submit).pack(side=tk.RIGHT, padx=4)
 
     def _pick_files(self):
@@ -168,4 +168,4 @@ class AddVideosScreen:
             messagebox.showerror("Cannot add recording", str(e))
             return
 
-        self.main_tool.go_project_view()
+        self.navigator.go_project_view()

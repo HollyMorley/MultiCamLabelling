@@ -8,14 +8,14 @@ from annotation_tool.gui.utils import attach_tooltip
 
 
 class ProjectView:
-    def __init__(self, root, main_tool, project):
+    def __init__(self, root, navigator, project):
         self.root = root
-        self.main_tool = main_tool
+        self.navigator = navigator
         self.project = project
         self.build()
 
     def build(self):
-        self.main_tool.clear_root()
+        self.navigator.clear_root()
         self.root.title(f"Project: {self.project.project_name}")
 
         outer = tk.Frame(self.root)
@@ -33,8 +33,8 @@ class ProjectView:
                  f"reference: {self.project.reference_view})",
             fg="#666",
         ).pack(side=tk.LEFT)
-        tk.Button(header, text="Back to Home", command=self.main_tool.go_home).pack(side=tk.RIGHT, padx=2)
-        tk.Button(header, text="Add Videos", command=self.main_tool.go_add_videos).pack(side=tk.RIGHT, padx=2)
+        tk.Button(header, text="Back to Home", command=self.navigator.go_home).pack(side=tk.RIGHT, padx=2)
+        tk.Button(header, text="Add Videos", command=self.navigator.go_add_videos).pack(side=tk.RIGHT, padx=2)
 
         # Recordings
         body = tk.Frame(outer)
@@ -93,15 +93,15 @@ class ProjectView:
             label_msg = "needs calibration — run Calibrate first"
 
         self._tool_button(
-            row, "Extract", lambda r=recording: self.main_tool.go_extract(r),
+            row, "Extract", lambda r=recording: self.navigator.go_extract(r),
             extract_msg,
         )
         self._tool_button(
-            row, "Calibrate", lambda r=recording: self.main_tool.go_calibrate(r),
+            row, "Calibrate", lambda r=recording: self.navigator.go_calibrate(r),
             calibrate_msg,
         )
         self._tool_button(
-            row, "Label", lambda r=recording: self.main_tool.go_label(r),
+            row, "Label", lambda r=recording: self.navigator.go_label(r),
             label_msg,
         )
 

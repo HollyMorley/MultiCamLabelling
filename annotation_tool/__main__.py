@@ -1,11 +1,11 @@
 import tkinter as tk
 
-from annotation_tool.gui.app import MainTool
+from annotation_tool.gui.app import Navigator
 
 
 def main():
     root = tk.Tk()
-    MainTool(root)
+    Navigator(root)
     root.mainloop()
 
 

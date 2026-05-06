@@ -16,8 +16,8 @@ from annotation_tool.sync import load_synced_video_captures
 
 
 class CalibrateCamerasTool(LabellingBase):
-    def __init__(self, root, main_tool, project, recording):
-        super().__init__(root, main_tool, project, recording)
+    def __init__(self, root, navigator, project, recording):
+        super().__init__(root, navigator, project, recording)
         self.caps = {}
         self.total_frames = 0
         self.mode = "calibration"
@@ -33,7 +33,7 @@ class CalibrateCamerasTool(LabellingBase):
         self._setup()
 
     def _setup(self):
-        self.main_tool.clear_root()
+        self.navigator.clear_root()
 
         views = self.project.views
 
@@ -84,7 +84,7 @@ class CalibrateCamerasTool(LabellingBase):
         nav_column.pack(side=tk.LEFT, padx=5)
         tk.Button(nav_column, text="Reset View", command=self.reset_view).pack(pady=5)
         tk.Button(nav_column, text="Back to Project View",
-                  command=self.main_tool.go_project_view).pack(pady=5)
+                  command=self.navigator.go_project_view).pack(pady=5)
         tk.Button(nav_column, text="Exit",
                   command=self.root.quit).pack(pady=5)
 

@@ -25,8 +25,8 @@ from annotation_tool.gui.utils import (
 
 
 class LabelFramesTool(LabellingBase):
-    def __init__(self, root, main_tool, project, recording):
-        super().__init__(root, main_tool, project, recording)
+    def __init__(self, root, navigator, project, recording):
+        super().__init__(root, navigator, project, recording)
         self.body_part_labels = project.require_body_part_labels()
         self.calibration_labels = project.require_calibration_labels()
         # Subset of calibration_labels whose position varies per frame (e.g.
@@ -65,7 +65,7 @@ class LabelFramesTool(LabellingBase):
         self.label_frames_menu()
 
     def label_frames_menu(self):
-        self.main_tool.clear_root()
+        self.navigator.clear_root()
 
         self.calibration_file_path = paths.calibration_csv(self.project, self.recording)
         enhanced_calibration_file = paths.calibration_csv_enhanced(self.project, self.recording)
@@ -75,7 +75,7 @@ class LabelFramesTool(LabellingBase):
                 "Error",
                 "No calibration found for this recording. Run Calibrate first.",
             )
-            self.main_tool.go_project_view()
+            self.navigator.go_project_view()
             return
 
         # Bug fix: previously hardcoded "Side"/"Front"/"Overhead" segments;
@@ -90,7 +90,7 @@ class LabelFramesTool(LabellingBase):
                 "Error",
                 "One or more extracted-frames folders not found. Run Extract first.",
             )
-            self.main_tool.go_project_view()
+            self.navigator.go_project_view()
             return
 
         self.current_frame_index = 0
@@ -161,7 +161,7 @@ class LabelFramesTool(LabellingBase):
         self.display_frame()
 
     def setup_labeling_ui(self):
-        self.main_tool.clear_root()
+        self.navigator.clear_root()
 
         main_frame = tk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -215,7 +215,7 @@ class LabelFramesTool(LabellingBase):
         control_frame_right.pack(side=tk.RIGHT, padx=20)
         tk.Button(control_frame_right, text="Save Labels", command=self.save_labels).pack(pady=5)
         tk.Button(control_frame_right, text="Back to Project View",
-                  command=self.main_tool.go_project_view).pack(pady=5)
+                  command=self.navigator.go_project_view).pack(pady=5)
         tk.Button(control_frame_right, text="Exit", command=self.confirm_exit).pack(pady=5)
 
         # Scrollable label buttons

@@ -15,13 +15,13 @@ from annotation_tool.gui.utils import help_button, make_scrollable
 
 
 class CreateProjectDialog:
-    def __init__(self, root, main_tool):
+    def __init__(self, root, navigator):
         self.root = root
-        self.main_tool = main_tool
+        self.navigator = navigator
         self.build()
 
     def build(self):
-        self.main_tool.clear_root()
+        self.navigator.clear_root()
         self.root.title("Create Project")
 
         # Pinned title at the top
@@ -35,7 +35,7 @@ class CreateProjectDialog:
         # it always reserves its space even on short windows)
         btns = tk.Frame(self.root)
         btns.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(6, 16))
-        tk.Button(btns, text="Cancel", command=self.main_tool.go_home).pack(side=tk.RIGHT, padx=4)
+        tk.Button(btns, text="Cancel", command=self.navigator.go_home).pack(side=tk.RIGHT, padx=4)
         tk.Button(btns, text="Create", command=self._submit).pack(side=tk.RIGHT, padx=4)
 
         # Scrollable middle: holds the form
@@ -257,5 +257,5 @@ class CreateProjectDialog:
             messagebox.showerror("Cannot create project", str(e))
             return
 
-        self.main_tool.project = project
-        self.main_tool.go_project_view()
+        self.navigator.project = project
+        self.navigator.go_project_view()
