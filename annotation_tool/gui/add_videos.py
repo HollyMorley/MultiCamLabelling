@@ -38,7 +38,7 @@ class AddVideosScreen:
             text=(
                 "Pick one video per camera view for this recording. "
                 "Each video and its sibling _Timestamps.csv will be copied into "
-                "the project's Videos/ folder."
+                "the project's videos/ folder."
             ),
             wraplength=600, justify=tk.LEFT, fg="#666",
         ).pack(anchor="w", pady=(0, 12))

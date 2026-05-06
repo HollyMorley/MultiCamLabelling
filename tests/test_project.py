@@ -72,7 +72,7 @@ def test_add_recording_copies_videos_and_persists(tmp_path):
     src = _make_fake_videos(tmp_path)
     p.add_recording("session1", src)
 
-    # Videos and timestamp siblings copied into Videos/.
+    # Videos and timestamp siblings copied into videos/.
     for view in VIEWS:
         assert os.path.isfile(paths.video_path(p, p.recordings[0], view))
         assert os.path.isfile(paths.timestamps_path(p, p.recordings[0], view))

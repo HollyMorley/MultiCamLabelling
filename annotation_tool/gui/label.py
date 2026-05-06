@@ -79,9 +79,9 @@ class LabelFramesTool(LabellingBase):
             return
 
         # Bug fix: previously hardcoded "Side"/"Front"/"Overhead" segments;
-        # now driven by project.views via paths.frames_dir.
+        # now driven by project.views via paths.labeled_data_dir.
         self.extracted_frames_path = {
-            v: paths.frames_dir(self.project, self.recording, v)
+            v: paths.labeled_data_dir(self.project, self.recording, v)
             for v in self.project.views
         }
 

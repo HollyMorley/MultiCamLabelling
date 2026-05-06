@@ -64,7 +64,7 @@ be left blank and filled in later via `project.yaml` - commented templates are i
 
 Click **Add Videos** to register a recording. The dialog auto-detects which view each file
 belongs to from the filename (e.g. `Demo_session1_side.avi` → side view) and copies the videos
-plus their timestamp CSVs into the project's `Videos/` folder.
+plus their timestamp CSVs into the project's `videos/` folder.
 
 <p align="center">
   <img src="docs/add_videos.png" alt="Add Videos dialog" width="65%">
@@ -98,7 +98,7 @@ are greyed out - hover for an explanation of what's missing.
 </p>
 
 When you're done, **Save Labels** writes one `CollectedData_<name>.csv` (and `.h5`) per camera
-view under the recording's `labels/` folder, ready to feed into DeepLabCut for model training and pose estimation.
+view under the recording's `labeled_data/<view>/` folder, ready to feed into DeepLabCut for model training and pose estimation.
 
 ## Tools - controls & options
 
@@ -125,7 +125,7 @@ view under the recording's `labels/` folder, ready to feed into DeepLabCut for m
 - **Optimize Calibration** - adjusts the manually labelled calibration points to minimize
   reprojection error between camera views, improving the projection estimates.
 - **Save Labels** - writes one `CollectedData_<name>.csv` (and `.h5`) file per camera view under
-  the recording's `labels/` folder.
+  the recording's `labeled_data/<view>/` folder.
 - **Controls:** Right-click to place, Shift+Right-click to delete, Left-click drag to move, Hover for label name.
 
 ## Project structure (codebase)
@@ -165,22 +165,20 @@ A project on disk looks like this:
 ```
 my_project/
 ├── project.yaml             # Project config (cameras, label schemas, recordings list)
-├── Videos/                  # Videos copied here when added via Add Videos
+├── videos/                  # Videos copied here when added via Add Videos
 │   ├── Demo_session1_side.avi
 │   ├── Demo_session1_side_Timestamps.csv
 │   ├── Demo_session1_front.avi
 │   └── ...
 └── recordings/
     └── Demo_session1/       # Everything for one recording lives here
-        ├── frames/
-        │   ├── side/img0.png ...
+        ├── labeled_data/    # Frames and their body-part labels, per view
+        │   ├── side/
+        │   │   ├── img0.png ...
+        │   │   └── CollectedData_<name>.csv (+.h5)
         │   ├── front/
         │   └── overhead/
-        ├── calibration/
-        │   ├── labels.csv
-        │   └── labels_enhanced.csv
-        └── labels/
-            ├── side/CollectedData_<name>.csv (+.h5)
-            ├── front/
-            └── overhead/
+        └── calibration/
+            ├── labels.csv
+            └── labels_enhanced.csv
 ```

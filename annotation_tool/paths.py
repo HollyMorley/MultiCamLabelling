@@ -30,7 +30,7 @@ def parse_video_filename(
 
 
 def videos_initial_dir(project: Project) -> str:
-    """Initial directory for file pickers — the project's Videos/ folder if it
+    """Initial directory for file pickers — the project's videos/ folder if it
     exists, else the project root."""
     vd = project.videos_dir()
     return vd if os.path.isdir(vd) else project.dir
@@ -53,14 +53,17 @@ def timestamps_path(project: Project, recording: Recording, view: str) -> str:
     return os.path.splitext(vp)[0] + "_Timestamps.csv"
 
 
-def frames_dir(project: Project, recording: Recording, view: str) -> str:
-    return os.path.join(recording_dir(project, recording), "frames", view)
+def labeled_data_dir(project: Project, recording: Recording, view: str) -> str:
+    """Per-view directory holding both the extracted frames (PNG) and the
+    body-part label files (CSV + H5). Follows the DeepLabCut convention of
+    keeping each frame next to its labels."""
+    return os.path.join(recording_dir(project, recording), "labeled_data", view)
 
 
 def frame_image_path(
     project: Project, recording: Recording, view: str, frame_number: int
 ) -> str:
-    return os.path.join(frames_dir(project, recording, view), f"img{frame_number}.png")
+    return os.path.join(labeled_data_dir(project, recording, view), f"img{frame_number}.png")
 
 
 def calibration_dir(project: Project, recording: Recording) -> str:
@@ -81,10 +84,6 @@ def default_calibration_csv(project: Project) -> str:
     return os.path.join(project.dir, "default_calibration.csv")
 
 
-def labels_dir(project: Project, recording: Recording, view: str) -> str:
-    return os.path.join(recording_dir(project, recording), "labels", view)
-
-
 def _labels_basename(scorer: str | None) -> str:
     return f"{LABELS_CSV_BASENAME}_{scorer}" if scorer else LABELS_CSV_BASENAME
 
@@ -97,7 +96,7 @@ def labels_csv(
     inserted into the filename (`CollectedData_<scorer>.csv`); defaults to
     the project's `name` (the labeller)."""
     scorer = scorer if scorer is not None else project.name
-    return os.path.join(labels_dir(project, recording, view), f"{_labels_basename(scorer)}.csv")
+    return os.path.join(labeled_data_dir(project, recording, view), f"{_labels_basename(scorer)}.csv")
 
 
 def labels_h5(
@@ -107,7 +106,7 @@ def labels_h5(
     """Path to the per-view labels HDF5 sibling. See labels_csv for the
     `scorer` parameter."""
     scorer = scorer if scorer is not None else project.name
-    return os.path.join(labels_dir(project, recording, view), f"{_labels_basename(scorer)}.h5")
+    return os.path.join(labeled_data_dir(project, recording, view), f"{_labels_basename(scorer)}.h5")
 
 
 # =============================================================================
@@ -126,7 +125,7 @@ def has_extracted_frames(project: Project, recording: Recording) -> bool:
     """True if every view has at least one extracted frame on disk."""
     image_exts = (".png", ".jpg", ".jpeg", ".bmp", ".tiff")
     return all(
-        _dir_has_files(frames_dir(project, recording, v), image_exts)
+        _dir_has_files(labeled_data_dir(project, recording, v), image_exts)
         for v in project.views
     )
 

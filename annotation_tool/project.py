@@ -4,7 +4,7 @@ A project is a directory containing:
 
     <project_dir>/
         project.yaml
-        Videos/                 # videos copied here when added via add_recording
+        videos/                 # videos copied here when added via add_recording
         recordings/<name>/      # extracted frames, calibration, labels for one session
 
 `project.yaml` describes the camera setup and label schemas, plus a list of
@@ -25,7 +25,7 @@ from annotation_tool.constants import DEFAULT_NAME
 
 
 PROJECT_FILE = "project.yaml"
-VIDEOS_DIRNAME = "Videos"
+VIDEOS_DIRNAME = "videos"
 RECORDINGS_DIRNAME = "recordings"
 
 
@@ -136,11 +136,11 @@ class Recording:
     Examples:
         - name: "Demo session 1"
         - videos:
-            side: "Videos/Demo_session1_side.avi"
+            side: "videos/Demo_session1_side.avi"
             ...
     """
     name: str
-    videos: dict[str, str]
+    videos: dict[str, str] # view name -> video path
 
 
 @dataclass
@@ -374,7 +374,7 @@ class Project:
         name: str,
         video_paths: dict[str, str],
     ) -> Recording:
-        """Copy each video into Videos/, append the recording to self.recordings,
+        """Copy each video into videos/, append the recording to self.recordings,
         and write project.yaml so the change is saved to disk.
 
         `video_paths` maps view name -> absolute source path. All views in
